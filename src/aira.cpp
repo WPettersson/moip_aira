@@ -5,59 +5,62 @@
 #include <ilcplex/cplex.h>
 #include <libgen.h>
 #include <time.h>
-#include <glib.h>
+
+#include <list>
 
 /* List node. */
-typedef struct {
-  double *ip;
-  int *result;
-  int infeasible;
-} Problem;
+class Problem {
+  public:
+    double *ip;
+    int *result;
+    int infeasible;
+};
 
 /* List of possible relaxations */
-GSList* list = NULL;
+std::list<Problem*> list;
+
+/* List of things we've printed */
+std::list<Problem *> printed;
 
 /* CPLEX environment and problem */
 CPXENVptr env = NULL;
 CPXLPptr  lp = NULL;
 
 /* Objective count */
-int objcnt; 
+int objcnt;
 
 /* Solve CLMOIP and return status */
 int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs, int *result, int *ipcount);
 
 /* Add new solution/problem to list of possible relaxations */
-void add_to_list(double *ip, int *result, int infeasible);
+void add_to_list(double *ip, int *result, bool infeasible);
 
 /* Search list for relaxations.
  * ip: Current problem
  * ipr: Place holder for the relaxation to the current problem
  */
-int getrelaxation(double *ip, double *ipr, int *result, int *infeasible, int objsen);
+int getrelaxation(double *ip, double *ipr, int *result, bool *infeasible, int objsen);
 
-/* Compare two solutions (from struct Problem) 
+/* Compare two solutions (from struct Problem)
  * returns negative value if a < b; zero if a = b; positive value if a > b.
  * */
-gint icmp(gconstpointer a, gconstpointer b);
+bool icmp(const Problem * a, const Problem * b);
 
-/* Clean up Problem nodes in the list */
-void  free_list(gpointer data);
+bool problems_equal(const Problem * a, const Problem * b);
 
 int main (int argc, char *argv[])
 {
 
   int status = 0; /* Operation status */
   int solnstat; /* Solution status (from CPLEX) */
-  int i,j,k; /* counters */
 
   /* LP File Processing  */
   int from, to; /* First row, last row */
   int cur_numrows, cur_numcols, cur_numnz; /* # rows in current problem, # cols, # nonzero values*/
   int rmatspace, cur_objsen; /* Length of rmatind & rmatval, objective sense of current objective */
   int nzcnt, surplus; /* Nonzero row value count, array length check */
-  int *rmatbeg, *rmatind; /* Row indices, column indices of rmatval */ 
-  double *rhs, *ipr, *rmatval; /* Constraint RHS, relaxation ip, nozero row values */ 
+  int *rmatbeg, *rmatind; /* Row indices, column indices of rmatval */
+  double *rhs, *ipr, *rmatval; /* Constraint RHS, relaxation ip, nozero row values */
   int **objind; /* Objective indices */
   double **objcoef; /* Objective coefficients */
   int *conind; /* Constraint indices */
@@ -65,23 +68,19 @@ int main (int argc, char *argv[])
 
   /* Algorithm */
   int infcnt; /* Infeasibility count */
-  int *infeasible; /* Infeasibility flag for relaxation */
-  int inflast, relaxed; /* Last iteration was feasible?, did we find a relaxation? */ 
+  bool *infeasible; /* Infeasibility flag for relaxation */
+  int inflast, relaxed; /* Last iteration was feasible?, did we find a relaxation? */
   int *result, *max, *min; /* Current result, max result, min result */
 
   /* LP and log file */
   FILE *outfp;
   char *lpfn, *outfn, *tmpstr;
 
-  /* Utility singly linked lists */
-  GSList *iterator = NULL;
-  GSList *printed = NULL; 
-  GSList *tmplst = NULL;
-  
+
   /* Timing */
   clock_t starttime, endtime;
-  time_t startelapsed, endelapsed; 
-  double cpu_time_used, elapsedtime; 
+  time_t startelapsed, endelapsed;
+  double cpu_time_used, elapsedtime;
   int *ipcount;
   int solcount;
 
@@ -89,11 +88,11 @@ int main (int argc, char *argv[])
     printf("\nUsage: aira <filename.lp>\n\n");
     exit(1);
   }
-  
+
   /* Last arg is the lp file */
   lpfn = argv[argc-1];
 
-  /* Output file: <filename>.out */ 
+  /* Output file: <filename>.out */
   tmpstr = (char *) malloc(strlen(lpfn) * sizeof(char));
   outfn = (char *) malloc(strlen(lpfn) * sizeof(char));
   tmpstr = strrchr(lpfn, '.');
@@ -104,9 +103,12 @@ int main (int argc, char *argv[])
 
   /* Initialize the CPLEX environment */
   env = CPXopenCPLEX (&status);
-  
+
   /* Set to deterministic parallel mode */
-  status=CPXsetintparam(env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);  
+  status=CPXsetintparam(env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
+
+  /* Set to only one thread */
+  CPXsetintparam(env, CPXPARAM_Threads, 1);
 
   if (env == NULL) {
     char  errmsg[CPXMESSAGEBUFSIZE];
@@ -118,7 +120,7 @@ int main (int argc, char *argv[])
 
  status = CPXsetintparam(env, CPX_PARAM_SCRIND, CPX_OFF);
  if (status) {
-   fprintf (stderr, 
+   fprintf (stderr,
        "Failure to turn off screen indicator, error %d.\n", status);
    goto TERMINATE;
  }
@@ -137,13 +139,13 @@ int main (int argc, char *argv[])
     fprintf (stderr, "Failed to read and copy the problem data.\n");
     goto TERMINATE;
   }
-  
+
   /* Get last rhs and determine the number of objectives.*/
   cur_numcols = CPXgetnumcols(env, lp);
   cur_numrows = CPXgetnumrows(env, lp);
   cur_numnz = CPXgetnumnz(env, lp);
 
-  rhs = (double *) malloc(cur_numrows * sizeof(double));
+  rhs = new double[cur_numrows];
   if (rhs == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
@@ -151,38 +153,38 @@ int main (int argc, char *argv[])
 
   /* Get RHS of last objective - this tells us the objective count */
   status = CPXgetrhs (env, lp, rhs, cur_numrows-1, cur_numrows-1);
-  
-  if (status) { 
-    fprintf (stderr, "Failed to get RHS.\n"); 
+
+  if (status) {
+    fprintf (stderr, "Failed to get RHS.\n");
     goto TERMINATE;
   }
 
-  objcnt = (int) rhs[0];
-  
-  /* Create a pair of multidimensional arrays to store the objective 
+  objcnt = static_cast<int>(rhs[0]);
+
+  /* Create a pair of multidimensional arrays to store the objective
    * coefficients and their indices indices first */
-  objind =  malloc(objcnt * sizeof(int *));
+  objind = new int*[objcnt];
   if (objind == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
-  for(j=0; j<objcnt; j++) {
+  for(int j = 0; j < objcnt; j++) {
     objind[j] = (int *) malloc(cur_numcols * sizeof(int));
     if (objind[j] == NULL) {
       fprintf(stderr, "Error! memory is not available\n");
       goto TERMINATE;
     }
-    for(i=0; i<cur_numcols;i++){
+    for(int i = 0; i < cur_numcols; i++){
       objind[j][i] = i;
     }
   }
   /* Now coefficients */
-  objcoef = malloc(objcnt * sizeof(double *));
+  objcoef = static_cast<double **>(malloc(objcnt * sizeof(double *)));
   if (objcoef == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
-  for(j=0; j<objcnt; j++) {
+  for(int j = 0; j < objcnt; j++) {
     objcoef[j] = (double *) malloc(cur_numcols * sizeof(double));
     if (objcoef[j] == NULL) {
       fprintf(stderr, "Error! memory is not available\n");
@@ -207,26 +209,26 @@ int main (int argc, char *argv[])
   if (status) {
     fprintf (stderr, "Couldn't get rows.\n");
     goto TERMINATE;
-  }  
+  }
 
-  for (j=0; j<objcnt; j++) {
+  for (int j = 0; j < objcnt; j++) {
     from = rmatbeg[j];
-    if (j==objcnt-1) {
+    if (j == objcnt-1) {
       to = nzcnt-1;
     }
     else {
       to = rmatbeg[(j+1)] - 1;
     }
-    for (k=from;k<=to;k++){
-      objcoef[j][rmatind[k]] = rmatval[k]; 
+    for (int k = from; k <= to; k++){
+      objcoef[j][rmatind[k]] = rmatval[k];
     }
   }
 
   /* Setup problem for solving */
 
   /* Resize rhs to fit only objective function constraints */
-  free(rhs);
-  rhs = (double *) malloc(objcnt * sizeof(double));
+  delete[] rhs;
+  rhs = new double[objcnt];
   if (rhs == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
@@ -241,29 +243,27 @@ int main (int argc, char *argv[])
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
-  for (j=0; j<objcnt; j++) {
+  for (int j = 0; j < objcnt; j++) {
     if (cur_objsen == CPX_MIN) {
       consense[j] = 'L'; /* Set sense to <= */
-      rhs[j] = CPX_INFBOUND; 
+      rhs[j] = CPX_INFBOUND;
     }
     else {
       consense[j] = 'G'; /* Set sense to >= */
-      rhs[j] = -CPX_INFBOUND; 
+      rhs[j] = -CPX_INFBOUND;
     }
   }
- 
+
   /* Specify index of objective constraints */
-  conind = (int *) malloc(objcnt * sizeof(int)); 
+  conind = (int *) malloc(objcnt * sizeof(int));
   if (conind == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
-  k = objcnt;
-  for (j=0; j<objcnt; j++) {
+  for (int j = 0, k = objcnt; j < objcnt; j++, k--) {
     conind[j] = cur_numrows-k;
-    k--;
   }
-  
+
   /* Set sense of objective constraints */
   status = CPXchgsense (env, lp, objcnt, conind, consense);
   if (status) {
@@ -279,26 +279,26 @@ int main (int argc, char *argv[])
   }
 
   /* Allocate an array to store the result */
-  result = (int *) malloc(objcnt * sizeof(int)); 
+  result = (int *) malloc(objcnt * sizeof(int));
   if (result == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
-  
+
   /* Allocate an array to track the maximum values */
-  max = (int *) malloc(objcnt * sizeof(int)); 
+  max = (int *) malloc(objcnt * sizeof(int));
   if (max == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
   /* Allocate an array to track the minimum values */
-  min = (int *) malloc(objcnt * sizeof(int)); 
+  min = (int *) malloc(objcnt * sizeof(int));
   if (min == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
   }
 
-  ipcount = (int *) malloc(sizeof(int)); 
+  ipcount = (int *) malloc(sizeof(int));
   if (ipcount == NULL) {
     fprintf(stderr, "Error! memory is not available\n");
     goto TERMINATE;
@@ -315,25 +315,28 @@ int main (int argc, char *argv[])
   /* Start the timer */
   starttime = clock();
   startelapsed = time(NULL);
-  
+
   solnstat = solve(objcnt, objind, objcoef, conind, rhs, result, ipcount);
   memcpy(max, result, objcnt * sizeof(int));
   memcpy(min, result, objcnt * sizeof(int));
 
-  infeasible = (int *) malloc(sizeof(int));
-  *infeasible = FALSE;
-  
+  infeasible = new bool;
+  *infeasible = false;
+
   /* Need to add a result to the list here*/
   add_to_list(rhs, result, *infeasible);
 
-  for (i=1; i<objcnt; i++) {
+  // Have some permutation that maps preimage_i to i
+  // with a different permutation for each thread?
+  // with a different lead objective for each thread?
+  for (int i = 1; i < objcnt; i++) {
     int depth = 1; /* Track current "recursion" depth */
-    int onwalk = FALSE; /* Are we on the move? */
+    int onwalk = false; /* Are we on the move? */
     infcnt = 0; /* Infeasible count*/
-    inflast = FALSE; /* Last iteration infeasible?*/
-    
+    inflast = false; /* Last iteration infeasible?*/
+
     /* Set all contraints back to infinity*/
-    for (j=0; j<objcnt; j++) {
+    for (int j = 0; j < objcnt; j++) {
       if (cur_objsen == CPX_MIN) {
         rhs[j] = CPX_INFBOUND;
       }
@@ -353,32 +356,32 @@ int main (int argc, char *argv[])
     min[i] = (int) CPX_INFBOUND;
 
     while (infcnt < i) {
-      relaxed = FALSE;
-    
+      relaxed = false;
+
       /* Look for possible relaxations to the current problem*/
       solnstat = getrelaxation(rhs, ipr, result, infeasible, cur_objsen);
-      relaxed = solnstat ? TRUE : FALSE;
-      
+      relaxed = solnstat ? true : false;
+
       if(!relaxed) {
         /* Solve in the absence of a relaxation*/
         solnstat = solve(objcnt, objind, objcoef, conind, rhs, result, ipcount);
       }
-      
-      if (solnstat == CPXMIP_INFEASIBLE || *infeasible) { 
+
+      if (solnstat == CPXMIP_INFEASIBLE || *infeasible) {
         infcnt++;
-        inflast = TRUE;
+        inflast = true;
       }
       else {
         infcnt = 0;
-        inflast = FALSE;
+        inflast = false;
         /* Update maxima */
-        for (j=1; j<objcnt; j++) {
+        for (int j = 1; j < objcnt; j++) {
           if (result[j] > max[j]) {
             max[j] = result[j];
           }
         }
         /* Update minima */
-        for (j=1; j<objcnt; j++) {
+        for (int j = 1; j<objcnt; j++) {
           if (result[j] < min[j]) {
             min[j] = result[j];
           }
@@ -391,7 +394,7 @@ int main (int argc, char *argv[])
 
       if (infcnt == i-1) {
         /* Set all contraints back to infinity */
-        for (j=0; j<objcnt; j++) {
+        for (int j = 0; j < objcnt; j++) {
           if (cur_objsen == CPX_MIN) {
             rhs[j] = CPX_INFBOUND;
           }
@@ -400,7 +403,7 @@ int main (int argc, char *argv[])
           }
         }
         /* In the case of a minimisation problem
-         * set current level to max objective function value  -1 else set 
+         * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
         if (cur_objsen == CPX_MIN) {
           rhs[i] = max[i]-1;
@@ -413,7 +416,7 @@ int main (int argc, char *argv[])
 
         /* Reset depth */
         depth = 1;
-        onwalk = FALSE;
+        onwalk = false;
       }
       else if (inflast && infcnt != i) {
         rhs[depth] = CPX_INFBOUND;
@@ -426,7 +429,7 @@ int main (int argc, char *argv[])
           rhs[depth] = min[depth]+1;
           min[depth] = (int) CPX_INFBOUND;
         }
-        onwalk = TRUE;
+        onwalk = true;
       }
       else if (!onwalk && infcnt != 1) {
         if (cur_objsen == CPX_MIN) {
@@ -448,10 +451,10 @@ int main (int argc, char *argv[])
           rhs[depth] = min[depth]+1;
           min[depth] = (int) CPX_INFBOUND;
         }
-        onwalk = FALSE;
+        onwalk = false;
       }
     }
-  } 
+  }
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
@@ -459,20 +462,25 @@ int main (int argc, char *argv[])
   cpu_time_used=((double) (endtime - starttime)) / CLOCKS_PER_SEC;
   elapsedtime=(double) endelapsed - startelapsed;
 
-  list = g_slist_sort(list, (GCompareFunc)icmp);
-  list = g_slist_reverse(list);
+  //list = g_slist_sort(list, (GCompareFunc)icmp);
+  //list = g_slist_reverse(list);
+  list.sort(icmp);
   solcount = 0;
 
-  for (iterator=list; iterator; iterator=iterator->next) {
-    if (printed != NULL) {
-      tmplst = g_slist_find_custom (printed, (gconstpointer)iterator->data, (GCompareFunc)icmp);
+  for (auto soln: list) {
+    bool printMe = true;
+    for (auto done: printed) {
+      if (problems_equal(done, soln)) {
+        printMe = false;
+        break;
+      }
     }
-    if (tmplst == NULL) {
-       for (i=0; i<objcnt; i++) {
-          fprintf(outfp,"%d \t", ((Problem*)iterator->data)->result[i]);
-        }
-        fprintf(outfp,"\n");
-      printed = g_slist_append(printed,((Problem*)iterator->data));
+    if (printMe) {
+      for (int i = 0; i < objcnt; i++) {
+        fprintf(outfp,"%d \t", soln->result[i]);
+      }
+      fprintf(outfp,"\n");
+      printed.push_back(soln);
       solcount++;
     }
   }
@@ -482,7 +490,6 @@ int main (int argc, char *argv[])
   fprintf(outfp,"%8d IPs solved\n", *ipcount);
   fprintf(outfp,"%8d Solutions found\n", solcount);
 
-  
   TERMINATE:
    /* Free up memory as necessary. */
    if ( lp != NULL ) {
@@ -501,18 +508,20 @@ int main (int argc, char *argv[])
          fprintf (stderr, "%s", errmsg);
       }
    }
-   if (rhs != NULL) free(rhs);
+   if (rhs != NULL)
+     delete[] rhs;
    if (rmatbeg != NULL) free(rmatbeg);
    if (rmatind != NULL) free(rmatind);
    if (rmatval != NULL) free(rmatval);
    if (objind !=NULL) {
-    for(j=0; j<objcnt; j++) {
+    for(int j = 0; j < objcnt; j++) {
       if (objind[j] != NULL) free(objind[j]);
     }
    }
-   if (objind != NULL) free(objind);
+   if (objind != NULL)
+     delete[] objind;
    if (objcoef !=NULL) {
-    for(j=0; j<objcnt; j++) {
+    for(int j = 0; j < objcnt; j++) {
       if (objcoef[j] != NULL) free(objcoef[j]);
     }
    }
@@ -520,16 +529,17 @@ int main (int argc, char *argv[])
    if (conind != NULL) free(conind);
    if (consense != NULL) free(consense);
    if (outfp != NULL) fclose(outfp);
-   if (printed != NULL) g_slist_free(printed);
-   if (list != NULL) g_slist_free_full(list, free_list);
-     
+
+   for(auto p: list)
+     delete p;
+
    return (status);
 }
 
 /* Solve CLMOIP and return solution status */
 int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
     int *result, int *ipcount) {
-  
+
   int j;
   int cur_numcols, status, solnstat;
   double objval, *srhs;
@@ -542,8 +552,9 @@ int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
   memcpy(srhs, rhs, objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(env, lp);
-  
-  for (j=0;j<objcnt;j++) {
+
+  // TODO Permutation applies here.
+  for (int j = 0; j < objcnt;j++) {
     status = CPXchgobj(env, lp, cur_numcols, objind[j], objcoef[j]);
     if (status) {
        fprintf (stderr, "Failed to set objective.\n");
@@ -553,7 +564,7 @@ int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
     if (status) {
       fprintf (stderr, "Failed to change constraint srhs\n");
     }
-  
+
     /* solve for current objective*/
     status = CPXmipopt (env, lp);
     if (status) {
@@ -561,7 +572,7 @@ int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
     }
 
     (*ipcount)++;
-    
+
     solnstat = CPXgetstat (env, lp);
     if (solnstat == CPXMIP_INFEASIBLE) {
        break;
@@ -570,7 +581,7 @@ int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
     if ( status ) {
        fprintf (stderr, "Failed to obtain objective value.\n");
     }
-    
+
     result[j] = round(objval);
     srhs[j] = round(objval);
   }
@@ -579,51 +590,50 @@ int solve(int objcnt, int **objind, double **objcoef, int *conind, double *rhs,
 }
 
 /* Add new solution/problem to list of possible relaxations */
-void add_to_list(double *ip, int *result, int infeasible) {
-  Problem* p = (Problem*) malloc(sizeof(Problem)); 
-  p->ip = malloc(objcnt * sizeof(double));
+void add_to_list(double *ip, int *result, bool infeasible) {
+  Problem* p = new Problem;
+  p->ip = new double[objcnt];
   memcpy(p->ip, ip, objcnt * sizeof(double));
   if (infeasible) {
-    p->infeasible = TRUE;
+    p->infeasible = true;
     p->result = NULL;
   }
   else {
-    p->infeasible = FALSE;
-    p->result = malloc(objcnt * sizeof(int));
+    p->infeasible = false;
+    p->result = new int[objcnt];
     memcpy(p->result, result, objcnt * sizeof(int));
   }
-  list = g_slist_append(list, p);
+  list.push_back(p);
 }
 
 /* Search list for relaxations.
  * ip: Current problem
  * ipr: Place holder for the relaxation to the current problem
  */
-int getrelaxation(double *ip, double *ipr, int *result, int *infeasible, int objsen) {
+int getrelaxation(double *ip, double *ipr, int *result, bool *infeasible, int objsen) {
 
-  GSList *iterator;
   int t1,t2,t3,i;
-  for (iterator=list; iterator; iterator=iterator->next) {
+  for (auto prob: list) {
 
-    t1 = TRUE;
-    t2 = FALSE;
-    t3 = TRUE;
+    t1 = true;
+    t2 = false;
+    t3 = true;
 
     if(objsen == CPX_MIN) {
       for (i=0; i<objcnt; i++){
         /* t1: All values of candidate must be >= than ip */
-        if (((Problem*)iterator->data)->ip[i] < ip[i]) {
-          t1 = FALSE;
+        if (prob->ip[i] < ip[i]) {
+          t1 = false;
           break;
         }
         /* t2: At least one inequality must be strict */
-        if (((Problem*)iterator->data)->ip[i] > ip[i]) {
-          t2 = TRUE;
+        if (prob->ip[i] > ip[i]) {
+          t2 = true;
         }
         /* t3: All values of candidate result must be <= than ip */
-        if (!((Problem*)iterator->data)->infeasible) {
-          if (((Problem*)iterator->data)->result[i] > ip[i]) {
-            t3 = FALSE;
+        if (!prob->infeasible) {
+          if (prob->result[i] > ip[i]) {
+            t3 = false;
             break;
           }
         }
@@ -632,18 +642,18 @@ int getrelaxation(double *ip, double *ipr, int *result, int *infeasible, int obj
     else {
       for (i=0; i<objcnt; i++){
         /* t1: All values of candidate must be <= than ip */
-        if (((Problem*)iterator->data)->ip[i] > ip[i]) {
-          t1 = FALSE;
+        if (prob->ip[i] > ip[i]) {
+          t1 = false;
           break;
         }
         /* t2: At least one inequality must be strict */
-        if (((Problem*)iterator->data)->ip[i] < ip[i]) {
-          t2 = TRUE;
+        if (prob->ip[i] < ip[i]) {
+          t2 = true;
         }
         /* t3: All values of candidate result must be >= than ip */
-        if (!((Problem*)iterator->data)->infeasible) {
-          if (((Problem*)iterator->data)->result[i] < ip[i]) {
-            t3 = FALSE;
+        if (!prob->infeasible) {
+          if (prob->result[i] < ip[i]) {
+            t3 = false;
             break;
           }
         }
@@ -651,10 +661,10 @@ int getrelaxation(double *ip, double *ipr, int *result, int *infeasible, int obj
     }
     /* If all conditions are met copy problem & solution and return */
     if (t1 && t2 && t3) {
-      memcpy(ipr, ((Problem*)iterator->data)->ip, objcnt * sizeof(double));
-      memcpy(infeasible, &((Problem*)iterator->data)->infeasible, sizeof(int));
+      memcpy(ipr, prob->ip, objcnt * sizeof(double));
+      *infeasible = prob->infeasible;
       if (!*infeasible) {
-        memcpy(result, ((Problem*)iterator->data)->result, objcnt * sizeof(int));
+        memcpy(result, prob->result, objcnt * sizeof(int));
       }
       return 1;
     }
@@ -662,28 +672,33 @@ int getrelaxation(double *ip, double *ipr, int *result, int *infeasible, int obj
   return 0;
 }
 
-/* Compare two solutions (from struct Problem) 
- * returns negative value if a < b; zero if a = b; positive value if a > b. */
-gint icmp(gconstpointer a, gconstpointer b) {
+/* Compare two solutions (from struct Problem)
+ * returns negative value if a < b; zero if a = b; positive value if a > b.
+ * True if a ≤ b, False otherwise.
+ * WARNING: This comparison function has been reversed to save a call to
+ * list::reverse. */
+bool icmp(const Problem * a, const Problem * b) {
   int i;
   for (i=0;i<objcnt;i++) {
-    if (((Problem*)a)->result[i] < ((Problem*)b)->result[i]) { 
-      return (gint)-1;
+    if (a->result[i] < b->result[i]) {
+      return false;
     }
-    else if (((Problem*)a)->result[i] > ((Problem*)b)->result[i]){ 
-      return (gint)1;
+    else if (a->result[i] > b->result[i]) {
+      return true;
     }
   }
-  return (gint)0;
+  return false;
 }
 
-/* Clean up Problem nodes in the list */
-void free_list(gpointer data) {
-  if (((Problem*)data)->ip != NULL) {
-    free(((Problem*)data)->ip);
+bool problems_equal(const Problem * a, const Problem * b) {
+  for (int i=0;i<objcnt;i++) {
+    if (a->result[i] < b->result[i]) {
+      return false;
+    }
+    else if (a->result[i] > b->result[i]) {
+      return false;
+    }
   }
-  if (((Problem*)data)->result != NULL) {
-    free(((Problem*)data)->result);
-  }
-} 
+  return true;
 
+}

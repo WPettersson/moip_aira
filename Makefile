@@ -2,18 +2,19 @@ SRC = ./src
 BUILD = ./build
 CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio1263
 CC = gcc
-CFLAGS = -Wextra -std=c99 -pedantic -g -DIL_STD -I$(CPLEXDIR)/cplex/include/ `pkg-config --cflags glib-2.0`
-CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -lm -lpthread `pkg-config --libs glib-2.0`
+CXX = g++
+CFLAGS = -g -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
+CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -pthread
 
 all: aira
 
 init:
-	mkdir -p ./build
+	mkdir -p $(BUILD)
 
 clean:
-	rm -R ./build
+	rm -R $(BUILD)
 
 aira: init aira.o
-	$(CC) $(BUILD)/aira.o -o $(BUILD)/aira $(CLNFLAGS)
-aira.o: $(SRC)/aira.c
-	$(CC) -c $(CFLAGS) $(SRC)/aira.c -o $(BUILD)/aira.o
+	$(CXX) $(BUILD)/aira.o -o $(BUILD)/aira $(CLNFLAGS)
+aira.o: $(SRC)/aira.cpp
+	$(CXX) -c $(CFLAGS) $(SRC)/aira.cpp -o $(BUILD)/aira.o
