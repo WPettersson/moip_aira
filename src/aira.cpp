@@ -7,45 +7,47 @@
 #include <time.h>
 
 #include <atomic>
+#include <iostream>
 #include <list>
+#include <mutex>
+#include <thread>
 
 #include "problem.h"
 #include "env.h"
+#include "symgroup.h"
+
+#define ERR_CPLEX -1
 
 /* List node. */
 class Result {
   public:
-    double *ip;
     int *result;
-    int infeasible;
+    bool infeasible;
+    double *ip;
 };
-
-/* List of possible relaxations */
-std::list<Result *> list;
-
-/* List of things we've printed */
-std::list<Result *> printed;
 
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
+
+std::list<Result *> list;
+std::mutex list_mutex;
 
 /* The filename of the problem */
 char *lpfn;
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, std::atomic<int> & ipcount);
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount);
 
-/* Add new solution/problem to list of possible relaxations */
 void add_to_list(double *ip, int *result, bool infeasible, int objcnt);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
  * objective values.
  * p is the problem (class)
- * perm_index is the index into S_n of the order in which we optimise each
+ * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int perm_index, Problem & p, int * first_result);
+void optimise(int thread_id, Problem & p, int * first_result);
 
 /* Search list for relaxations.
  * ip: Current problem
@@ -95,10 +97,12 @@ int main (int argc, char *argv[])
 
   int ipcount_nonatomic;
 
-  if (argc < 2) {
-    printf("\nUsage: aira <filename.lp>\n\n");
+  if (argc < 3) {
+    printf("\nUsage: aira <numthreads> <filename.lp>\n\n");
     exit(1);
   }
+
+  int num_threads = atoi(argv[1]);
 
   /* Last arg is the lp file */
   lpfn = argv[argc-1];
@@ -126,14 +130,14 @@ int main (int argc, char *argv[])
     fprintf (stderr, "Could not open CPLEX environment.\n");
     CPXgeterrorstring (e.env, status, errmsg);
     fprintf (stderr, "%s", errmsg);
-    goto TERMINATE;
+    return -ERR_CPLEX;
   }
 
  status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
  if (status) {
    fprintf (stderr,
        "Failure to turn off screen indicator, error %d.\n", status);
-   goto TERMINATE;
+    return -ERR_CPLEX;
  }
 
   /* Create the problem, using the filename as the problem name */
@@ -141,14 +145,14 @@ int main (int argc, char *argv[])
 
   if (e.lp == NULL) {
     fprintf (stderr, "Failed to create LP.\n");
-    goto TERMINATE;
+    return -ERR_CPLEX;
   }
 
   /* Now read the file, and copy the data into the created lp */
   status = CPXreadcopyprob(e.env, e.lp, lpfn, NULL);
   if (status) {
     fprintf (stderr, "Failed to read and copy the problem data.\n");
-    goto TERMINATE;
+    return -ERR_CPLEX;
   }
 
   /* Get last rhs and determine the number of objectives.*/
@@ -163,7 +167,7 @@ int main (int argc, char *argv[])
 
   if (status) {
     fprintf (stderr, "Failed to get RHS.\n");
-    goto TERMINATE;
+    return -ERR_CPLEX;
   }
 
   p.objcnt = static_cast<int>(p.rhs[0]);
@@ -195,7 +199,7 @@ int main (int argc, char *argv[])
 
   if (status) {
     fprintf (stderr, "Couldn't get rows.\n");
-    goto TERMINATE;
+    return -ERR_CPLEX;
   }
 
   for (int j = 0; j < p.objcnt; j++) {
@@ -245,15 +249,15 @@ int main (int argc, char *argv[])
   /* Set sense of objective constraints */
   status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
   if (status) {
-     fprintf (stderr, "Failed to change constraint sense\n");
-     goto TERMINATE;
+    fprintf (stderr, "Failed to change constraint sense\n");
+    return -ERR_CPLEX;
   }
 
   /* Set rhs of objective constraints */
   status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
   if (status) {
-     fprintf (stderr, "Failed to change constraint rhs\n");
-     goto TERMINATE;
+    fprintf (stderr, "Failed to change constraint rhs\n");
+    return -ERR_CPLEX;
   }
 
   fprintf(outfp, "\nUsing improved algorithm\n");
@@ -263,12 +267,21 @@ int main (int argc, char *argv[])
   startelapsed = time(NULL);
 
   result = new int[p.objcnt];
-  solnstat = solve(e, p, result, p.rhs, ipcount);
+  solnstat = solve(e, p, result, p.rhs, 0 /* thread_id */, ipcount);
 
   /* Need to add a result to the list here*/
   add_to_list(p.rhs, result, solnstat == CPXMIP_INFEASIBLE, p.objcnt);
 
-  optimise(0 /* perm_index */, p /* Problem */, result /* first_result */);
+  if (num_threads > S[p.objcnt].size())
+    num_threads = S[p.objcnt].size();
+
+  std::list<std::thread> threads;
+  for(int t = 0; t < num_threads; ++t) {
+    threads.emplace_back(optimise, t, std::ref(p), std::ref(result));
+  }
+  for (auto& thread: threads)
+    thread.join();
+  //optimise(0 /* thread_id */, p /* Problem */, result /* first_result */);
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
@@ -283,9 +296,13 @@ int main (int argc, char *argv[])
       );
   solcount = 0;
 
-  for (auto soln: list) {
-    bool printMe = ! soln->infeasible;
-    for (auto done: printed) {
+  /* List of things we've printed */
+  std::list<Result *> printed;
+  for (auto& soln: list) {
+    if (soln->infeasible)
+      continue;
+    bool printMe = true;
+    for (auto& done: printed) {
       if (problems_equal(done, soln, p.objcnt)) {
         printMe = false;
         break;
@@ -329,26 +346,33 @@ TERMINATE:
 
   if (outfp != NULL) fclose(outfp);
 
-  for(auto p: list)
+  for(auto& p: list)
     delete p;
 
   return (status);
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, std::atomic<int> & ipcount) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount) {
 
   int j;
   int cur_numcols, status, solnstat;
   double objval;
   double * srhs;
   srhs = new double[p.objcnt];
+  const int *perm = S[p.objcnt][thread_id];
+
+  //for(int i = 0; i < p.objcnt; ++i)
+  //  srhs[i] = rhs[perm[i]];
+
   memcpy(srhs, rhs, p.objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(e.env, e.lp);
 
+
   // TODO Permutation applies here.
-  for (int j = 0; j < p.objcnt; j++) {
+  for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
+    int j = perm[j_preimage];
     status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
     if (status) {
        fprintf (stderr, "Failed to set objective.\n");
@@ -399,7 +423,12 @@ void add_to_list(double *ip, int *result, bool infeasible, int objcnt) {
     r->result = new int[objcnt];
     memcpy(r->result, result, objcnt * sizeof(int));
   }
+//  for(int i = 0; i < objcnt; ++i)
+//    std::cout << ip[i] << ", ";
+//  std::cout << std::endl;
+  list_mutex.lock();
   list.push_back(r);
+  list_mutex.unlock();
 }
 
 /* Search list for relaxations.
@@ -410,7 +439,7 @@ bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
     objsen, int objcnt) {
 
   bool t1,t2,t3;
-  for (auto prob: list) {
+  for (auto& prob: list) {
 
     t1 = true;
     t2 = false;
@@ -457,7 +486,7 @@ bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
       }
     }
     /* If all conditions are met copy problem & solution and return */
-    if (t1 && t2 && t3) {
+    if (t1 && t3) {
       memcpy(ipr, prob->ip, objcnt * sizeof(double));
       infeasible = prob->infeasible;
       if (!infeasible) {
@@ -469,10 +498,10 @@ bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
   return false;
 }
 
-void optimise(int perm_index, Problem & p, int * first_result) {
-  /* Initialize the CPLEX environment */
+void optimise(int thread_id, Problem & p, int * first_result) {
   Env e;
   int status;
+  /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
 
   /* Set to deterministic parallel mode */
@@ -527,9 +556,15 @@ void optimise(int perm_index, Problem & p, int * first_result) {
     rhs[j] = p.rhs[j];
     min[j] = max[j] = first_result[j];
   }
-
-  for (int i = 1; i < p.objcnt; i++) {
-    int depth = 1; /* Track current "recursion" depth */
+  const int* perm = S[p.objcnt][thread_id];
+  for (int objective_counter = 0; objective_counter < p.objcnt; objective_counter++) {
+    int objective = perm[objective_counter];
+#ifdef DEBUG
+    std::cout << "Thread " << thread_id << " optimising obj # " << objective
+       << std::endl;
+#endif
+    int depth_level = 1; /* Track current "recursion" depth */
+    int depth = perm[depth_level]; /* Track depth objective */
     int onwalk = false; /* Are we on the move? */
     infcnt = 0; /* Infeasible count*/
     inflast = false; /* Last iteration infeasible?*/
@@ -546,30 +581,54 @@ void optimise(int perm_index, Problem & p, int * first_result) {
 
     /* Set rhs of current depth */
     if (p.objsen == CPX_MIN) {
-      rhs[i] = max[i]-1;
+      rhs[objective] = max[objective]-1;
     }
     else {
-      rhs[i] = min[i]+1;
+      rhs[objective] = min[objective]+1;
     }
-    max[i] = (int) -CPX_INFBOUND;
-    min[i] = (int) CPX_INFBOUND;
-
-    while (infcnt < i) {
+    max[objective] = (int) -CPX_INFBOUND;
+    min[objective] = (int) CPX_INFBOUND;
+    while (infcnt < objective_counter) {
       bool relaxed;
       int solnstat;
       /* Look for possible relaxations to the current problem*/
+#ifdef DEBUG
+      std::cout << "Thread " << thread_id << " with constraints ";
+      for(int i = 0; i < p.objcnt; ++i) {
+        if (rhs[i] > 1e19)
+          std::cout << "∞";
+        else
+          std::cout << rhs[i];
+        std::cout << ",";
+      }
+      std::cout << " found ";
+#endif
       relaxed = getrelaxation(rhs, ipr, result, infeasible, p.objsen, p.objcnt);
+#ifdef DEBUG
+      if (relaxed && !infeasible) {
+        std::cout << "relaxation ";
+      }
+#endif
 
       if(!relaxed) {
         /* Solve in the absence of a relaxation*/
-        solnstat = solve(e, p, result, rhs, ipcount);
+        solnstat = solve(e, p, result, rhs, thread_id, ipcount);
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
       }
       if (infeasible) {
+#ifdef DEBUG
+        std::cout << "infeasible." << std::endl;
+#endif
         infcnt++;
         inflast = true;
       }
       else {
+#ifdef DEBUG
+        for(int i = 0; i < p.objcnt; ++i) {
+          std::cout << result[i] << ",";
+        }
+        std::cout << std::endl;
+#endif
         infcnt = 0;
         inflast = false;
         /* Update maxima */
@@ -590,7 +649,7 @@ void optimise(int perm_index, Problem & p, int * first_result) {
         add_to_list(rhs, result, infeasible, p.objcnt);
       }
 
-      if (infcnt == i-1) {
+      if (infcnt == objective_counter-1) {
         /* Set all contraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
           if (p.objsen == CPX_MIN) {
@@ -604,21 +663,23 @@ void optimise(int perm_index, Problem & p, int * first_result) {
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
         if (p.objsen == CPX_MIN) {
-          rhs[i] = max[i]-1;
-          max[i] = (int) -CPX_INFBOUND;
+          rhs[objective] = max[objective]-1;
+          max[objective] = (int) -CPX_INFBOUND;
         }
         else {
-          rhs[i] = min[i]+1;
-          min[i] = (int) CPX_INFBOUND;
+          rhs[objective] = min[objective]+1;
+          min[objective] = (int) CPX_INFBOUND;
         }
 
         /* Reset depth */
-        depth = 1;
+        depth_level = 1;
+        depth = perm[depth_level];
         onwalk = false;
       }
-      else if (inflast && infcnt != i) {
+      else if (inflast && infcnt != objective_counter) {
         rhs[depth] = CPX_INFBOUND;
-        depth++;
+        depth_level++;
+        depth = perm[depth_level];
         if (p.objsen == CPX_MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
@@ -640,7 +701,8 @@ void optimise(int perm_index, Problem & p, int * first_result) {
         }
       }
       else if (onwalk && infcnt != 1)  {
-        depth = 1;
+        depth_level = 1;
+        depth = perm[depth_level];
         if (p.objsen == CPX_MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;

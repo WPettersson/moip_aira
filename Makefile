@@ -8,13 +8,18 @@ CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -pthread
 
 all: aira
 
-init:
+$(BUILD):
 	mkdir -p $(BUILD)
 
 clean:
 	rm -R $(BUILD)
 
-aira: init aira.o
-	$(CXX) $(BUILD)/aira.o -o $(BUILD)/aira $(CLNFLAGS)
-aira.o: $(SRC)/aira.cpp
-	$(CXX) -c $(CFLAGS) $(SRC)/aira.cpp -o $(BUILD)/aira.o
+aira: $(BUILD) $(BUILD)/symgroup.o $(BUILD)/aira.o
+	$(CXX) $(BUILD)/aira.o $(BUILD)/symgroup.o -o $(BUILD)/aira $(CLNFLAGS)
+
+$(BUILD)/%.o: $(SRC)/%.cpp $(SRC)/symgroup.h $(SRC)/symgroup_extern.h
+	$(CXX) -c $(CFLAGS) -o $@ $<
+
+$(SRC)/symgroup_extern.h:
+	$(SRC)/mk_symgroup.py
+
