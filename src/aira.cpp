@@ -15,16 +15,11 @@
 #include "problem.h"
 #include "env.h"
 #include "symgroup.h"
+#include "result.h"
 
 #define ERR_CPLEX -1
 
-/* List node. */
-class Result {
-  public:
-    int *result;
-    bool infeasible;
-    double *ip;
-};
+#define DEBUG
 
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
@@ -47,7 +42,7 @@ void add_to_list(double *ip, int *result, bool infeasible, int objcnt);
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, int * first_result);
+void optimise(int thread_id, Problem & p);
 
 /* Search list for relaxations.
  * ip: Current problem
@@ -266,18 +261,13 @@ int main (int argc, char *argv[])
   starttime = clock();
   startelapsed = time(NULL);
 
-  result = new int[p.objcnt];
-  solnstat = solve(e, p, result, p.rhs, 0 /* thread_id */, ipcount);
-
-  /* Need to add a result to the list here*/
-  add_to_list(p.rhs, result, solnstat == CPXMIP_INFEASIBLE, p.objcnt);
 
   if (num_threads > S[p.objcnt].size())
     num_threads = S[p.objcnt].size();
 
   std::list<std::thread> threads;
   for(int t = 0; t < num_threads; ++t) {
-    threads.emplace_back(optimise, t, std::ref(p), std::ref(result));
+    threads.emplace_back(optimise, t, std::ref(p));
   }
   for (auto& thread: threads)
     thread.join();
@@ -498,7 +488,7 @@ bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
   return false;
 }
 
-void optimise(int thread_id, Problem & p, int * first_result) {
+void optimise(int thread_id, Problem & p) {
   Env e;
   int status;
   /* Initialize the CPLEX environment */
@@ -546,18 +536,22 @@ void optimise(int thread_id, Problem & p, int * first_result) {
   double * rhs, * ipr;
 
   result = new int[p.objcnt];
+  int solnstat = solve(e, p, result, p.rhs, thread_id, ipcount);
+
+  /* Need to add a result to the list here*/
+  add_to_list(p.rhs, result, solnstat == CPXMIP_INFEASIBLE, p.objcnt);
   rhs = new double[p.objcnt];
   min = new int[p.objcnt];
   max = new int[p.objcnt];
-
   ipr = new double[p.objcnt];
+
 
   for (int j = 0; j < p.objcnt; j++) {
     rhs[j] = p.rhs[j];
-    min[j] = max[j] = first_result[j];
+    min[j] = max[j] = result[j];
   }
   const int* perm = S[p.objcnt][thread_id];
-  for (int objective_counter = 0; objective_counter < p.objcnt; objective_counter++) {
+  for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
     int objective = perm[objective_counter];
 #ifdef DEBUG
     std::cout << "Thread " << thread_id << " optimising obj # " << objective
@@ -632,13 +626,13 @@ void optimise(int thread_id, Problem & p, int * first_result) {
         infcnt = 0;
         inflast = false;
         /* Update maxima */
-        for (int j = 1; j < p.objcnt; j++) {
+        for (int j = 0; j < p.objcnt; j++) {
           if (result[j] > max[j]) {
             max[j] = result[j];
           }
         }
         /* Update minima */
-        for (int j = 1; j < p.objcnt; j++) {
+        for (int j = 0; j < p.objcnt; j++) {
           if (result[j] < min[j]) {
             min[j] = result[j];
           }
