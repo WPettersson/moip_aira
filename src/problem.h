@@ -1,13 +1,15 @@
 #ifndef PROBLEM_H
 #define PROBLEM_H
 
+#include "sense.h"
+
 class Problem {
   public:
     int objcnt; // Number of objectives
     double* rhs;
     int** objind; // Objective indices
     double** objcoef; // Objective coefficients
-    int objsen; // Objective sense. Note that all objectives must have the same
+    Sense objsen; // Objective sense. Note that all objectives must have the same
                 // sense (i.e., either all objectives are to be minimised, or
                 // all objectives are to be maximised).
     int* conind;

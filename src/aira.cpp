@@ -16,6 +16,7 @@
 #include "env.h"
 #include "symgroup.h"
 #include "result.h"
+#include "solutions.h"
 
 #define ERR_CPLEX -1
 
@@ -24,16 +25,11 @@
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
 
-std::list<Result *> list;
-std::mutex list_mutex;
-
 /* The filename of the problem */
 char *lpfn;
 
 /* Solve CLMOIP and return status */
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount);
-
-void add_to_list(double *ip, int *result, bool infeasible, int objcnt);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -42,19 +38,7 @@ void add_to_list(double *ip, int *result, bool infeasible, int objcnt);
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p);
-
-/* Search list for relaxations.
- * ip: Current problem
- * ipr: Place holder for the relaxation to the current problem
- */
-bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
-    objsen, int objcnt);
-
-/* Compare two solutions (from struct Problem)
- * returns negative value if a < b; zero if a = b; positive value if a > b.
- * */
-bool icmp(const Result * a, const Result * b, int objcnt);
+void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -62,7 +46,6 @@ int main (int argc, char *argv[])
 {
 
   int status = 0; /* Operation status */
-  int solnstat; /* Solution status (from CPLEX) */
 
   /* LP File Processing  */
   int from, to; /* First row, last row */
@@ -70,14 +53,10 @@ int main (int argc, char *argv[])
   int rmatspace; /* Length of rmatind & rmatval */
   int nzcnt, surplus; /* Nonzero row value count, array length check */
   int *rmatbeg, *rmatind; /* Row indices, column indices of rmatval */
-  double *ipr, *rmatval; /* Constraint RHS, relaxation ip, nozero row values */
-  char *consense; /* Constraint senses */
+  double *rmatval; /* Constraint RHS, relaxation ip, nozero row values */
 
   Problem p;
   Env e;
-
-  /* Algorithm */
-  int *result; /* Current result*/
 
   /* LP and log file */
   FILE *outfp;
@@ -220,8 +199,8 @@ int main (int argc, char *argv[])
   p.rhs = new double[p.objcnt];
 
   /* Get objective sense */
-  p.objsen = CPXgetobjsen(e.env, e.lp);
-
+  int cpx_sense = CPXgetobjsen(e.env, e.lp);
+  p.objsen = (cpx_sense == CPX_MIN ? MIN : MAX);
   /* Set objective constraint sense and RHS */
   p.consense = new char[p.objcnt];
   for (int j = 0; j < p.objcnt; j++) {
@@ -266,8 +245,10 @@ int main (int argc, char *argv[])
     num_threads = S[p.objcnt].size();
 
   std::list<std::thread> threads;
+  Solutions all(p.objcnt);
+  std::mutex solutionMutex;
   for(int t = 0; t < num_threads; ++t) {
-    threads.emplace_back(optimise, t, std::ref(p));
+    threads.emplace_back(optimise, t, std::ref(p), std::ref(all), std::ref(solutionMutex));
   }
   for (auto& thread: threads)
     thread.join();
@@ -281,14 +262,12 @@ int main (int argc, char *argv[])
 
   //list = g_slist_sort(list, (GCompareFunc)icmp);
   //list = g_slist_reverse(list);
-  list.sort( [&](const Result * a, const Result * b)
-      { return icmp(a,b,p.objcnt); }
-      );
+  all.sort();
   solcount = 0;
 
   /* List of things we've printed */
-  std::list<Result *> printed;
-  for (auto& soln: list) {
+  std::list<const Result *> printed;
+  for (const Result* soln: all) {
     if (soln->infeasible)
       continue;
     bool printMe = true;
@@ -336,16 +315,12 @@ TERMINATE:
 
   if (outfp != NULL) fclose(outfp);
 
-  for(auto& p: list)
-    delete p;
-
   return (status);
 }
 
 /* Solve CLMOIP and return solution status */
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount) {
 
-  int j;
   int cur_numcols, status, solnstat;
   double objval;
   double * srhs;
@@ -399,97 +374,10 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
   return solnstat;
 }
 
-/* Add new solution/problem to list of possible relaxations */
-void add_to_list(double *ip, int *result, bool infeasible, int objcnt) {
-  Result * r = new Result;
-  r->ip = new double[objcnt];
-  memcpy(r->ip, ip, objcnt * sizeof(double));
-  if (infeasible) {
-    r->infeasible = true;
-    r->result = NULL;
-  }
-  else {
-    r->infeasible = false;
-    r->result = new int[objcnt];
-    memcpy(r->result, result, objcnt * sizeof(int));
-  }
-//  for(int i = 0; i < objcnt; ++i)
-//    std::cout << ip[i] << ", ";
-//  std::cout << std::endl;
-  list_mutex.lock();
-  list.push_back(r);
-  list_mutex.unlock();
-}
 
-/* Search list for relaxations.
- * ip: Current problem
- * ipr: Place holder for the relaxation to the current problem
- */
-bool getrelaxation(double *ip, double *ipr, int *result, bool &infeasible, int
-    objsen, int objcnt) {
-
-  bool t1,t2,t3;
-  for (auto& prob: list) {
-
-    t1 = true;
-    t2 = false;
-    t3 = true;
-
-    if(objsen == CPX_MIN) {
-      for (int i = 0; i < objcnt; i++){
-        /* t1: All values of candidate must be >= than ip */
-        if (prob->ip[i] < ip[i]) {
-          t1 = false;
-          break;
-        }
-        /* t2: At least one inequality must be strict */
-        if (prob->ip[i] > ip[i]) {
-          t2 = true;
-        }
-        /* t3: All values of candidate result must be <= than ip */
-        if (!prob->infeasible) {
-          if (prob->result[i] > ip[i]) {
-            t3 = false;
-            break;
-          }
-        }
-      }
-    }
-    else {
-      for (int i = 0; i < objcnt; i++){
-        /* t1: All values of candidate must be <= than ip */
-        if (prob->ip[i] > ip[i]) {
-          t1 = false;
-          break;
-        }
-        /* t2: At least one inequality must be strict */
-        if (prob->ip[i] < ip[i]) {
-          t2 = true;
-        }
-        /* t3: All values of candidate result must be >= than ip */
-        if (!prob->infeasible) {
-          if (prob->result[i] < ip[i]) {
-            t3 = false;
-            break;
-          }
-        }
-      }
-    }
-    /* If all conditions are met copy problem & solution and return */
-    if (t1 && t3) {
-      memcpy(ipr, prob->ip, objcnt * sizeof(double));
-      infeasible = prob->infeasible;
-      if (!infeasible) {
-        memcpy(result, prob->result, objcnt * sizeof(int));
-      }
-      return true;
-    }
-  }
-  return false;
-}
-
-void optimise(int thread_id, Problem & p) {
+void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionMutex) {
   Env e;
+  Solutions s(p.objcnt);
   int status;
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
@@ -539,7 +427,14 @@ void optimise(int thread_id, Problem & p) {
   int solnstat = solve(e, p, result, p.rhs, thread_id, ipcount);
 
   /* Need to add a result to the list here*/
-  add_to_list(p.rhs, result, solnstat == CPXMIP_INFEASIBLE, p.objcnt);
+  s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
+#ifdef DEBUG
+    std::cout << "Thread " << thread_id << " with constraints ∞,∞,∞ found ";
+        for(int i = 0; i < p.objcnt; ++i) {
+          std::cout << result[i] << ",";
+        }
+        std::cout << std::endl;
+#endif
   rhs = new double[p.objcnt];
   min = new int[p.objcnt];
   max = new int[p.objcnt];
@@ -565,7 +460,7 @@ void optimise(int thread_id, Problem & p) {
 
     /* Set all contraints back to infinity*/
     for (int j = 0; j < p.objcnt; j++) {
-      if (p.objsen == CPX_MIN) {
+      if (p.objsen == MIN) {
         rhs[j] = CPX_INFBOUND;
       }
       else {
@@ -574,7 +469,7 @@ void optimise(int thread_id, Problem & p) {
     }
 
     /* Set rhs of current depth */
-    if (p.objsen == CPX_MIN) {
+    if (p.objsen == MIN) {
       rhs[objective] = max[objective]-1;
     }
     else {
@@ -591,20 +486,26 @@ void optimise(int thread_id, Problem & p) {
       for(int i = 0; i < p.objcnt; ++i) {
         if (rhs[i] > 1e19)
           std::cout << "∞";
+        else if (rhs[i] < -1e19)
+          std::cout << "-∞";
         else
           std::cout << rhs[i];
         std::cout << ",";
       }
       std::cout << " found ";
 #endif
-      relaxed = getrelaxation(rhs, ipr, result, infeasible, p.objsen, p.objcnt);
-#ifdef DEBUG
-      if (relaxed && !infeasible) {
-        std::cout << "relaxation ";
-      }
-#endif
+      const Result *relaxation;
 
-      if(!relaxed) {
+      relaxation = s.find(rhs, p.objsen);
+      relaxed = (relaxation != nullptr);
+      if (relaxed) {
+        infeasible = relaxation->infeasible;
+        ipr = relaxation->ip;
+        result = relaxation->result;
+#ifdef DEBUG
+        std::cout << "relaxation ";
+#endif
+      } else {
         /* Solve in the absence of a relaxation*/
         solnstat = solve(e, p, result, rhs, thread_id, ipcount);
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
@@ -640,13 +541,13 @@ void optimise(int thread_id, Problem & p) {
       }
       /* Store result */
       if (!relaxed) {
-        add_to_list(rhs, result, infeasible, p.objcnt);
+        s.insert(rhs, result, infeasible);
       }
 
       if (infcnt == objective_counter-1) {
         /* Set all contraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-          if (p.objsen == CPX_MIN) {
+          if (p.objsen == MIN) {
             rhs[j] = CPX_INFBOUND;
           }
           else {
@@ -656,7 +557,7 @@ void optimise(int thread_id, Problem & p) {
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
-        if (p.objsen == CPX_MIN) {
+        if (p.objsen == MIN) {
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
         }
@@ -674,7 +575,7 @@ void optimise(int thread_id, Problem & p) {
         rhs[depth] = CPX_INFBOUND;
         depth_level++;
         depth = perm[depth_level];
-        if (p.objsen == CPX_MIN) {
+        if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         }
@@ -685,7 +586,7 @@ void optimise(int thread_id, Problem & p) {
         onwalk = true;
       }
       else if (!onwalk && infcnt != 1) {
-        if (p.objsen == CPX_MIN) {
+        if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         }
@@ -697,7 +598,7 @@ void optimise(int thread_id, Problem & p) {
       else if (onwalk && infcnt != 1)  {
         depth_level = 1;
         depth = perm[depth_level];
-        if (p.objsen == CPX_MIN) {
+        if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         }
@@ -709,30 +610,11 @@ void optimise(int thread_id, Problem & p) {
       }
     }
   }
+  solutionMutex.lock();
+  all.merge(s);
+  solutionMutex.unlock();
 }
 
-/* Compare two solutions (from struct Result)
- * True if a ≤ b, False otherwise.
- * Note that infeasible < feasible.
- * WARNING: This comparison function has been reversed to save a call to
- * list::reverse. */
-bool icmp(const Result * a, const Result * b, int objcnt) {
-  if (a->infeasible) {
-      return true;
-  }
-  if (b->infeasible) {
-    return false;
-  }
-  for (int i = 0; i < objcnt; i++) {
-    if (a->result[i] < b->result[i]) {
-      return false;
-    }
-    else if (a->result[i] > b->result[i]) {
-      return true;
-    }
-  }
-  return false;
-}
 
 bool problems_equal(const Result * a, const Result * b, int objcnt) {
   // Are they both feasible, or both infeasible
