@@ -204,7 +204,7 @@ int main (int argc, char *argv[])
   /* Set objective constraint sense and RHS */
   p.consense = new char[p.objcnt];
   for (int j = 0; j < p.objcnt; j++) {
-    if (p.objsen == CPX_MIN) {
+    if (p.objsen == MIN) {
       p.consense[j] = 'L'; /* Set sense to <= */
       p.rhs[j] = CPX_INFBOUND;
     }
@@ -293,7 +293,6 @@ int main (int argc, char *argv[])
   fprintf(outfp,"%8d IPs solved\n", ipcount_nonatomic);
   fprintf(outfp,"%8d Solutions found\n", solcount);
 
-TERMINATE:
   /* Free up memory as necessary. */
   if ( e.lp != NULL ) {
      status = CPXfreeprob (e.env, &e.lp);
