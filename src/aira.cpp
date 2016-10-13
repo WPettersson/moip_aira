@@ -446,7 +446,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   bool inflast;
   bool infeasible;
   int * max, * min,  * result, *resultStore;
-  double * rhs, * ipr;
+  double * rhs;
 
   result = resultStore = new int[p.objcnt];
   int solnstat = solve(e, p, result, p.rhs, thread_id, ipcount);
@@ -463,7 +463,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   rhs = new double[p.objcnt];
   min = new int[p.objcnt];
   max = new int[p.objcnt];
-  ipr = new double[p.objcnt];
 
 
   for (int j = 0; j < p.objcnt; j++) {
@@ -517,7 +516,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       relaxed = (relaxation != nullptr);
       if (relaxed) {
         infeasible = relaxation->infeasible;
-        ipr = relaxation->ip;
         result = relaxation->result;
       } else {
         /* Solve in the absence of a relaxation*/
@@ -548,8 +546,30 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         }
         std::cout << std::endl;
       }
+      if (!infeasible) {
+        if (p.objsen == MIN) {
+          if (result[perm[p.objcnt-2]] >= my_limit) {
+            std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
+          }
+        } else {
+          if (result[perm[p.objcnt-2]] <= my_limit) {
+            std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
+          }
+        }
+      }
       debug_mutex.unlock();
 #endif
+      if (!infeasible) {
+        if (p.objsen == MIN) {
+          if (result[perm[p.objcnt-2]] >= my_limit) {
+            break;
+          }
+        } else {
+          if (result[perm[p.objcnt-2]] <= my_limit) {
+            break;
+          }
+        }
+      }
       if (infeasible) {
         infcnt++;
         inflast = true;
@@ -647,7 +667,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   delete[] rhs;
   delete[] min;
   delete[] max;
-  delete[] ipr;
 }
 
 
