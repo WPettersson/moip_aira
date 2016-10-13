@@ -6,7 +6,7 @@ CXX = g++
 CFLAGS = -g -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
 CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -pthread
 
-OBJS = $(BUILD)/symgroup.o $(BUILD)/aira.o $(BUILD)/solutions.o
+OBJS = $(BUILD)/symgroup.o $(BUILD)/aira.o $(BUILD)/solutions.o $(BUILD)/result.o
 
 all: aira
 

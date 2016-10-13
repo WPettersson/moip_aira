@@ -20,7 +20,11 @@
 
 #define ERR_CPLEX -1
 
-#define DEBUG
+//#define DEBUG
+
+#ifdef DEBUG
+std::mutex debug_mutex;
+#endif
 
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
@@ -38,7 +42,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex);
+void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit );
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -247,12 +251,33 @@ int main (int argc, char *argv[])
   std::list<std::thread> threads;
   Solutions all(p.objcnt);
   std::mutex solutionMutex;
-  for(int t = 0; t < num_threads; ++t) {
-    threads.emplace_back(optimise, t, std::ref(p), std::ref(all), std::ref(solutionMutex));
+
+  // Each pair of threads shares two of these limits.
+  // If we have an odd number of threads (including 1) then we don't want to
+  // access invalid memory, and one extra double is unlikely to break any
+  // memory constraints.
+  std::atomic<double> *limits = new std::atomic<double>[num_threads+1];
+
+  for(int t = 0; t < num_threads; t += 2) {
+    if (p.objsen == MIN) {
+      limits[t] = CPX_INFBOUND;
+      limits[t+1] = CPX_INFBOUND;
+    } else {
+      limits[t] = -CPX_INFBOUND;
+      limits[t+1] = -CPX_INFBOUND;
+    }
+    threads.emplace_back(optimise,
+        t, std::ref(p), std::ref(all), std::ref(solutionMutex),
+        std::ref(limits[t]), std::ref(limits[t+1]));
+    // Odd number of threads
+    if (t+1 == num_threads)
+      continue;
+    threads.emplace_back(optimise,
+        t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
+        std::ref(limits[t+1]), std::ref(limits[t]));
   }
   for (auto& thread: threads)
     thread.join();
-  //optimise(0 /* thread_id */, p /* Problem */, result /* first_result */);
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
@@ -374,7 +399,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
 }
 
 
-void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionMutex) {
+void optimise(int thread_id, Problem & p, Solutions & all,
+    std::mutex &solutionMutex, std::atomic<double> & my_limit, std::atomic<double> & partner_limit) {
   Env e;
   Solutions s(p.objcnt);
   int status;
@@ -419,16 +445,16 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
   int infcnt;
   bool inflast;
   bool infeasible;
-  int * max, * min,  * result;
+  int * max, * min,  * result, *resultStore;
   double * rhs, * ipr;
 
-  result = new int[p.objcnt];
+  result = resultStore = new int[p.objcnt];
   int solnstat = solve(e, p, result, p.rhs, thread_id, ipcount);
 
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
 #ifdef DEBUG
-    std::cout << "Thread " << thread_id << " with constraints ∞,∞,∞ found ";
+    std::cout << "Thread " << thread_id << " with constraints ∞* found ";
         for(int i = 0; i < p.objcnt; ++i) {
           std::cout << result[i] << ",";
         }
@@ -447,10 +473,6 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
   const int* perm = S[p.objcnt][thread_id];
   for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
     int objective = perm[objective_counter];
-#ifdef DEBUG
-    std::cout << "Thread " << thread_id << " optimising obj # " << objective
-       << std::endl;
-#endif
     int depth_level = 1; /* Track current "recursion" depth */
     int depth = perm[depth_level]; /* Track depth objective */
     int onwalk = false; /* Are we on the move? */
@@ -466,6 +488,10 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
         rhs[j] = -CPX_INFBOUND;
       }
     }
+    if (p.objcnt > 1) {
+      partner_limit = rhs[perm[p.objcnt-1]];
+      rhs[perm[p.objcnt-2]] = my_limit;
+    }
 
     /* Set rhs of current depth */
     if (p.objsen == MIN) {
@@ -480,7 +506,27 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
       bool relaxed;
       int solnstat;
       /* Look for possible relaxations to the current problem*/
+      const Result *relaxation;
+
+      if (p.objcnt > 1) {
+        partner_limit = rhs[perm[p.objcnt-1]];
+        rhs[perm[p.objcnt-2]] = my_limit;
+      }
+
+      relaxation = s.find(rhs, p.objsen);
+      relaxed = (relaxation != nullptr);
+      if (relaxed) {
+        infeasible = relaxation->infeasible;
+        ipr = relaxation->ip;
+        result = relaxation->result;
+      } else {
+        /* Solve in the absence of a relaxation*/
+        result = resultStore;
+        solnstat = solve(e, p, result, rhs, thread_id, ipcount);
+        infeasible = (solnstat == CPXMIP_INFEASIBLE);
+      }
 #ifdef DEBUG
+      debug_mutex.lock();
       std::cout << "Thread " << thread_id << " with constraints ";
       for(int i = 0; i < p.objcnt; ++i) {
         if (rhs[i] > 1e19)
@@ -492,37 +538,22 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
         std::cout << ",";
       }
       std::cout << " found ";
-#endif
-      const Result *relaxation;
-
-      relaxation = s.find(rhs, p.objsen);
-      relaxed = (relaxation != nullptr);
-      if (relaxed) {
-        infeasible = relaxation->infeasible;
-        ipr = relaxation->ip;
-        result = relaxation->result;
-#ifdef DEBUG
+      if (relaxed)
         std::cout << "relaxation ";
-#endif
-      } else {
-        /* Solve in the absence of a relaxation*/
-        solnstat = solve(e, p, result, rhs, thread_id, ipcount);
-        infeasible = (solnstat == CPXMIP_INFEASIBLE);
-      }
       if (infeasible) {
-#ifdef DEBUG
         std::cout << "infeasible." << std::endl;
-#endif
-        infcnt++;
-        inflast = true;
-      }
-      else {
-#ifdef DEBUG
+      } else {
         for(int i = 0; i < p.objcnt; ++i) {
           std::cout << result[i] << ",";
         }
         std::cout << std::endl;
+      }
+      debug_mutex.unlock();
 #endif
+      if (infeasible) {
+        infcnt++;
+        inflast = true;
+      } else {
         infcnt = 0;
         inflast = false;
         /* Update maxima */
@@ -612,6 +643,11 @@ void optimise(int thread_id, Problem & p, Solutions & all, std::mutex &solutionM
   solutionMutex.lock();
   all.merge(s);
   solutionMutex.unlock();
+  delete[] resultStore;
+  delete[] rhs;
+  delete[] min;
+  delete[] max;
+  delete[] ipr;
 }
 
 

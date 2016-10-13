@@ -57,8 +57,9 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
 void Solutions::insert(const double *lp, const int *result,
     const bool infeasible) {
   Result * r = new Result;
+  r->objective_count = objective_count;
   r->ip = new double[objective_count];
-  memcpy(r->ip, lp, objective_count * sizeof(double));
+  std::memcpy(r->ip, lp, objective_count * sizeof(double));
   if (infeasible) {
     r->infeasible = true;
     r->result = nullptr;
@@ -66,7 +67,7 @@ void Solutions::insert(const double *lp, const int *result,
   else {
     r->infeasible = false;
     r->result = new int[objective_count];
-    memcpy(r->result, result, objective_count * sizeof(int));
+    std::memcpy(r->result, result, objective_count * sizeof(int));
   }
   store_.push_back(r);
 }

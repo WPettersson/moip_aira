@@ -6,20 +6,38 @@
  * results, so this sorts the results in descending order.
  * Note that infeasible > feasible, but we don't show infeasible results so it
  * doesn't really matter. */
-bool Result::operator<(const Result * other) const {
-  if (this->infeasible) {
+bool operator<(const Result& lhs, const Result& rhs) {
+  if (lhs.infeasible) {
       return true;
   }
-  if (other->infeasible) {
+  if (rhs.infeasible) {
     return false;
   }
-  for (int i = 0; i < objective_count; i++) {
-    if (this->result[i] < other->result[i]) {
+  if (lhs.objective_count < rhs.objective_count)
+    return false;
+  if (lhs.objective_count > rhs.objective_count)
+    return true;
+  for (int i = 0; i < lhs.objective_count; i++) {
+    if (lhs.result[i] < rhs.result[i]) {
       return false;
     }
-    else if (this->result[i] > other->result[i]) {
+    else if (lhs.result[i] > rhs.result[i]) {
       return true;
     }
   }
   return false;
+}
+
+std::ostream& operator<<(std::ostream& out, const Result& r) {
+  if (r.infeasible) {
+    out << "Infeasible";
+    return out;
+  }
+  out << " Feasible : ";
+  for (int i = 0; i < r.objective_count; ++i) {
+    out << r.result[i];
+    if (i < r.objective_count-1)
+      out <<",";
+  }
+  return out;
 }
