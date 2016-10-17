@@ -1,34 +1,36 @@
 SRC = ./src
-BUILD = ./build
+TARGETDIR = ./build
+#TARGETDIR = ./debug
 CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio1263
 CC = gcc
 CXX = g++
-CFLAGS = -g -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
+CFLAGS = -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
+#CFLAGS = -g -DDEBUG -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
 CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -pthread
-
-OBJS = $(BUILD)/symgroup.o $(BUILD)/aira.o $(BUILD)/solutions.o $(BUILD)/result.o
 
 all: aira
 
-$(BUILD):
-	mkdir -p $(BUILD)
+OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o
+
+$(TARGETDIR):
+	mkdir -p $(TARGETDIR)
 
 clean:
-	rm -R $(BUILD)
+	rm -R $(TARGETDIR)
 
-aira: $(BUILD) $(OBJS)
-	$(CXX) $(OBJS) -o $(BUILD)/aira $(CLNFLAGS)
+aira: $(TARGETDIR) $(OBJS)
+	$(CXX) $(OBJS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
-$(BUILD)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h
+$(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/aira.cpp
 
-$(BUILD)/symgroup.o: $(SRC)/symgroup.h $(SRC)/symgroup.cpp $(SRC)/symgroup_extern.h
+$(TARGETDIR)/symgroup.o: $(SRC)/symgroup.h $(SRC)/symgroup.cpp $(SRC)/symgroup_extern.h
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/symgroup.cpp
 
-$(BUILD)/solutions.o: $(SRC)/solutions.h $(SRC)/solutions.cpp $(SRC)/sense.h $(SRC)/result.h
+$(TARGETDIR)/solutions.o: $(SRC)/solutions.h $(SRC)/solutions.cpp $(SRC)/sense.h $(SRC)/result.h
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/solutions.cpp
 
-$(BUILD)/result.o: $(SRC)/result.h $(SRC)/result.cpp
+$(TARGETDIR)/result.o: $(SRC)/result.h $(SRC)/result.cpp
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/result.cpp
 
 $(SRC)/symgroup_extern.h: $(SRC)/mk_symgroup.py
