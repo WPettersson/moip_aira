@@ -488,10 +488,9 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
     }
     if (p.objcnt > 1) {
-      partner_limit = rhs[perm[p.objcnt-1]];
-      rhs[perm[p.objcnt-2]] = my_limit;
+      partner_limit = rhs[perm[1]];
+      rhs[perm[0]] = my_limit;
     }
-
     /* Set rhs of current depth */
     if (p.objsen == MIN) {
       rhs[objective] = max[objective]-1;
@@ -508,8 +507,8 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       const Result *relaxation;
 
       if (p.objcnt > 1) {
-        partner_limit = rhs[perm[p.objcnt-1]];
-        rhs[perm[p.objcnt-2]] = my_limit;
+        partner_limit = rhs[perm[1]];
+        rhs[perm[0]] = my_limit;
       }
 
       relaxation = s.find(rhs, p.objsen);
