@@ -6,7 +6,8 @@ CC = gcc
 CXX = g++
 CFLAGS = -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
 #CFLAGS = -g -DDEBUG -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
-CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/ -lcplex -pthread
+CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/
+LIBS=-pthread -lcplex -lboost_program_options
 
 all: aira
 
@@ -16,10 +17,10 @@ $(TARGETDIR):
 	mkdir -p $(TARGETDIR)
 
 clean:
-	rm -R $(TARGETDIR)
+	rm -Rf ./build ./debug
 
 aira: $(TARGETDIR) $(OBJS)
-	$(CXX) $(OBJS) -o $(TARGETDIR)/aira $(CLNFLAGS)
+	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
 $(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/aira.cpp
@@ -36,3 +37,5 @@ $(TARGETDIR)/result.o: $(SRC)/result.h $(SRC)/result.cpp
 $(SRC)/symgroup_extern.h: $(SRC)/mk_symgroup.py
 	$(SRC)/mk_symgroup.py
 
+$(SRC)/symgroup.cpp: $(SRC)/mk_symgroup.py
+	$(SRC)/mk_symgroup.py
