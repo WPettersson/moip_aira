@@ -610,12 +610,14 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 #endif
       if (!infeasible) {
         if (p.objsen == MIN) {
-          if (result[perm[p.objcnt-2]] >= my_limit) {
-            break;
+          if (result[perm[0]] >= my_limit) {
+            // Pretend infeasible to backtrack properly
+            infeasible = true;
           }
         } else {
-          if (result[perm[p.objcnt-2]] <= my_limit) {
-            break;
+          if (result[perm[0]] <= my_limit) {
+            // Pretend infeasible to backtrack properly
+            infeasible = true;
           }
         }
       }
