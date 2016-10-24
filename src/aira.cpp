@@ -7,10 +7,15 @@
 #include <time.h>
 
 #include <atomic>
+#include <ctime>
 #include <iostream>
+#include <iomanip>
+#include <fstream>
 #include <list>
 #include <mutex>
 #include <thread>
+
+#include <boost/program_options.hpp>
 
 #include "problem.h"
 #include "env.h"
@@ -30,7 +35,7 @@ std::mutex debug_mutex;
 std::atomic<int> ipcount;
 
 /* The filename of the problem */
-char *lpfn;
+const char *lpfn;
 
 /* Solve CLMOIP and return status */
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount);
@@ -45,6 +50,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
 void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit );
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
+
+namespace po = boost::program_options;
 
 int main (int argc, char *argv[])
 {
@@ -62,37 +69,71 @@ int main (int argc, char *argv[])
   Problem p;
   Env e;
 
-  /* LP and log file */
-  FILE *outfp;
-  char *outfn, *tmpstr;
-
+  std::string lpFilename, outputFilename;
 
   /* Timing */
   clock_t starttime, endtime;
-  time_t startelapsed, endelapsed;
+  time_t startelapsed;
   double cpu_time_used, elapsedtime;
   int solcount;
 
   int ipcount_nonatomic;
 
-  if (argc < 3) {
-    printf("\nUsage: aira <numthreads> <filename.lp>\n\n");
-    exit(1);
+  po::variables_map v;
+
+
+  int num_threads, cplex_threads;
+  po::options_description opt("Options for aira");
+  opt.add_options()
+    ("help,h", "Show this help.")
+    ("lp,p",
+      po::value<std::string>(&lpFilename),
+     "The LP file to solve. Required.")
+    ("output,o",
+      po::value<std::string>(&outputFilename),
+     "The output file. Optional.")
+    ("threads,t",
+      po::value<int>(&num_threads)->default_value(1),
+     "Number of threads to use internally. Optional, default to 1.")
+    ("cplex_threads,c",
+        po::value<int>(&cplex_threads)->default_value(1),
+     "Number of threads to allocate to CPLEX.\n"
+     "Note that each internal thread calls CPLEX, so the total number of\n"
+     "threads used is threads*cplex_threads.\n"
+     "Optional, defaults to 1.")
+  ;
+
+  po::store(po::parse_command_line(argc, argv, opt), v);
+  po::notify(v);
+
+  if (v.count("help")) {
+    // usage();
+    std::cout << opt << std::endl;
+    return(1);
   }
 
-  int num_threads = atoi(argv[1]);
 
-  /* Last arg is the lp file */
-  lpfn = argv[argc-1];
+  if (v.count("lp") == 0) {
+    // usage();
+    std::cerr << "Error: You must pass in a problem file. All other parameters are optional." << std::endl;
+    std::cout << opt << std::endl;
+    return(1);
+  }
 
-  /* Output file: <filename>.out */
-  tmpstr = (char *) malloc(strlen(lpfn) * sizeof(char));
-  outfn = (char *) malloc(strlen(lpfn) * sizeof(char));
-  tmpstr = strrchr(lpfn, '.');
-  strncpy(outfn, lpfn, tmpstr-lpfn);
-  outfn[tmpstr-lpfn] = '\0';
-  strcat(outfn, ".out");
-  outfp = fopen(outfn, "w+");
+  lpfn = lpFilename.c_str();
+
+
+  std::ofstream outFile;
+
+  if (v.count("output")) {
+    outFile.open(outputFilename);
+  } else {
+    /* Output file: <filename>.out */
+    size_t last = lpFilename.find_last_of(".");
+    outFile.open(lpFilename.substr(0, last).append(".out"));
+  }
+
+
 
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
@@ -101,7 +142,7 @@ int main (int argc, char *argv[])
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
   /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, 1);
+  CPXsetintparam(e.env, CPXPARAM_Threads, cplex_threads);
 
   if (e.env == NULL) {
     char  errmsg[CPXMESSAGEBUFSIZE];
@@ -238,11 +279,13 @@ int main (int argc, char *argv[])
     return -ERR_CPLEX;
   }
 
-  fprintf(outfp, "\nUsing improved algorithm\n");
+  outFile << std::endl << "Using improved algorithm" << std::endl;
 
   /* Start the timer */
   starttime = clock();
-  startelapsed = time(NULL);
+  timespec start;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  startelapsed = start.tv_sec;
 
 
   if (num_threads > S[p.objcnt].size())
@@ -281,9 +324,9 @@ int main (int argc, char *argv[])
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
-  endelapsed = time (NULL);
   cpu_time_used=((double) (endtime - starttime)) / CLOCKS_PER_SEC;
-  elapsedtime=(double) endelapsed - startelapsed;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  elapsedtime=(double) start.tv_sec - startelapsed;
 
   //list = g_slist_sort(list, (GCompareFunc)icmp);
   //list = g_slist_reverse(list);
@@ -304,19 +347,26 @@ int main (int argc, char *argv[])
     }
     if (printMe) {
       for (int i = 0; i < p.objcnt; i++) {
-        fprintf(outfp,"%d \t", soln->result[i]);
+        outFile << soln->result[i] << "\t";
       }
-      fprintf(outfp,"\n");
+      outFile << std::endl;
       printed.push_back(soln);
       solcount++;
     }
   }
 
-  fprintf(outfp,"\n---\n%8.4f CPU seconds\n", cpu_time_used);
-  fprintf(outfp,"%8.4f elapsed seconds\n", elapsedtime);
+  constexpr int width = 8;
+  constexpr int precision = 2;
+  outFile << std::endl << "---" << std::endl;
+  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << cpu_time_used << " CPU seconds" << std::endl;
+  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << elapsedtime << " elapsed seconds" << std::endl;
   ipcount_nonatomic = ipcount;
-  fprintf(outfp,"%8d IPs solved\n", ipcount_nonatomic);
-  fprintf(outfp,"%8d Solutions found\n", solcount);
+  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << ipcount << " IPs solved" << std::endl;
+  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << solcount << " Solutions found" << std::endl;
 
   /* Free up memory as necessary. */
   if ( e.lp != NULL ) {
@@ -337,7 +387,7 @@ int main (int argc, char *argv[])
   }
 
 
-  if (outfp != NULL) fclose(outfp);
+  outFile.close();
 
   return (status);
 }
