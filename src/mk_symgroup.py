@@ -22,7 +22,7 @@ def next_val(n, done=-1, sofar=[]):
     if done == 0:
         yield sofar
     else:
-        for k in range(0, n):
+        for k in range(n-1, 0-1, -1):
             if k not in sofar:
                 nextlist = list(sofar)
                 nextlist.append(k)
@@ -38,6 +38,7 @@ with open("symgroup.cpp", "w") as hfile:
         total = factorial(n)
         hfile.write("const int S%d[%d] = {\n" % (n, total * n))
         for s in next_val(n):
+            s.reverse()
             hfile.write("\t%s" % (",".join(map(str, s))))
             count += 1
             if count < total:
