@@ -15,12 +15,17 @@ class Problem {
     int* conind;
     char* consense;
 
+    Problem();
     ~Problem();
 
 };
 
+inline Problem::Problem() : objcnt(0) { }
 
 inline Problem::~Problem() {
+  // If objcnt == 0, then no problem has been assigned and no memory allocated
+  if (objcnt == 0)
+    return;
   for(int j = 0; j < objcnt; ++j) {
     delete[] objind[j];
     delete[] objcoef[j];
