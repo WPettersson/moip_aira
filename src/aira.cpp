@@ -597,11 +597,11 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
       if (!infeasible) {
         if (p.objsen == MIN) {
-          if (result[perm[p.objcnt-2]] >= my_limit) {
+          if (result[perm[0]] >= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
           }
         } else {
-          if (result[perm[p.objcnt-2]] <= my_limit) {
+          if (result[perm[0]] <= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
           }
         }
