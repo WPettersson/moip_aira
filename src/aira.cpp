@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <ctime>
 #include <iostream>
 #include <iomanip>
@@ -31,6 +32,15 @@
 std::mutex debug_mutex;
 #endif
 
+/* The threads need to synchronise the limits on objectives 3 through n */
+std::mutex status_mutex;
+std::mutex wait_mutex;
+enum Status { RUNNING, DONE };
+std::atomic<Status> thread_status;
+std::condition_variable cv;
+
+int num_threads;
+
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
 
@@ -47,7 +57,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit );
+void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit, std::atomic<double> *rest_limits);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -82,7 +92,7 @@ int main (int argc, char *argv[])
   po::variables_map v;
 
 
-  int num_threads, cplex_threads;
+  int cplex_threads;
   po::options_description opt("Options for aira");
   opt.add_options()
     ("help,h", "Show this help.")
@@ -291,6 +301,9 @@ int main (int argc, char *argv[])
   if (num_threads > S[p.objcnt].size())
     num_threads = S[p.objcnt].size();
 
+  if (num_threads > 2)
+    num_threads = 2;
+
   std::list<std::thread> threads;
   Solutions all(p.objcnt);
   std::mutex solutionMutex;
@@ -299,7 +312,7 @@ int main (int argc, char *argv[])
   // If we have an odd number of threads (including 1) then we don't want to
   // access invalid memory, and one extra double is unlikely to break any
   // memory constraints.
-  std::atomic<double> *limits = new std::atomic<double>[num_threads+1];
+  std::atomic<double> *limits = new std::atomic<double>[p.objcnt];
 
   for(int t = 0; t < num_threads; t += 2) {
     if (p.objsen == MIN) {
@@ -311,13 +324,13 @@ int main (int argc, char *argv[])
     }
     threads.emplace_back(optimise,
         t, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t]), std::ref(limits[t+1]));
+        std::ref(limits[t]), std::ref(limits[t+1]), &limits[2]);
     // Odd number of threads
     if (t+1 == num_threads)
       continue;
     threads.emplace_back(optimise,
         t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t+1]), std::ref(limits[t]));
+        std::ref(limits[t+1]), std::ref(limits[t]), &limits[2]);
   }
   for (auto& thread: threads)
     thread.join();
@@ -450,7 +463,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::
 
 
 void optimise(int thread_id, Problem & p, Solutions & all,
-    std::mutex &solutionMutex, std::atomic<double> & my_limit, std::atomic<double> & partner_limit) {
+    std::mutex &solutionMutex, std::atomic<double> & my_limit,
+    std::atomic<double> & partner_limit, std::atomic<double> *rest_limits) {
   Env e;
   Solutions s(p.objcnt);
   int status;
@@ -489,9 +503,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   /* Set rhs of objective constraints */
   status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
 
-  // Have some permutation that maps preimage_i to i
-  // with a different permutation for each thread?
-  // with a different lead objective for each thread?
   int infcnt;
   bool inflast;
   bool infeasible;
@@ -537,7 +548,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         rhs[j] = -CPX_INFBOUND;
       }
     }
-    if (p.objcnt > 1) {
+    if (p.objcnt > 1 && (infcnt == 0)) {
       partner_limit = rhs[perm[1]];
       rhs[perm[0]] = my_limit;
     }
@@ -556,7 +567,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       /* Look for possible relaxations to the current problem*/
       const Result *relaxation;
 
-      if (p.objcnt > 1) {
+      if (p.objcnt > 1 && (infcnt == 0)) {
         partner_limit = rhs[perm[1]];
         rhs[perm[0]] = my_limit;
       }
@@ -595,7 +606,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         }
         std::cout << std::endl;
       }
-      if (!infeasible) {
+      if (!infeasible && (num_threads > 1)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
@@ -608,7 +619,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
       debug_mutex.unlock();
 #endif
-      if (!infeasible) {
+      if (!infeasible && (num_threads > 1)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             // Pretend infeasible to backtrack properly
@@ -643,6 +654,76 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       /* Store result */
       if (!relaxed) {
         s.insert(rhs, result, infeasible);
+      }
+
+      if (infeasible && (infcnt == (p.objcnt-2)) && (num_threads > 1)) { // Wait/share results of 2-objective problem
+#ifdef DEBUG
+        debug_mutex.lock();
+        std::cout << "Thread " << thread_id <<  " done" << std::endl;
+        debug_mutex.unlock();
+#endif
+        status_mutex.lock();
+        bool wait = false;
+        if (thread_status == RUNNING) {
+          thread_status = DONE;
+          for(int i = 2; i < p.objcnt; ++i) {
+            if (p.objsen == MIN) {
+              rest_limits[i] = max[i];
+            } else {
+              rest_limits[i] = min[i];
+            }
+          }
+          wait = true;
+        } else if (thread_status == DONE) {
+          for(int i = 2; i < p.objcnt; ++i) {
+            int o = perm[i];
+            if (p.objsen == MIN) {
+              if (rest_limits[o] < max[o]) {
+                rest_limits[o] = max[o];
+              } else {
+                max[o] = rest_limits[o];
+              }
+            } else {
+              if (rest_limits[o] > min[o]) {
+                rest_limits[o] = min[o];
+              } else {
+                min[o] = rest_limits[o];
+              }
+            }
+          }
+          if (p.objsen == MIN) {
+            my_limit = CPX_INFBOUND;
+          } else {
+            my_limit = -CPX_INFBOUND;
+          }
+          thread_status = RUNNING;
+          cv.notify_all();
+        }
+        status_mutex.unlock();
+
+        if (wait) {
+          std::unique_lock<std::mutex> lk(wait_mutex);
+          cv.wait(lk);
+          wait_mutex.unlock();
+          for(int i = 2; i < p.objcnt; ++i) {
+            int o = perm[i];
+            if (p.objsen == MIN) {
+              if (rest_limits[o] > max[o]) {
+                max[o] = rest_limits[o];
+              }
+            } else {
+              if (rest_limits[o] < min[o]) {
+                min[o] = rest_limits[o];
+              }
+            }
+          }
+          if (p.objsen == MIN) {
+            my_limit = CPX_INFBOUND;
+          } else {
+            my_limit = -CPX_INFBOUND;
+          }
+        }
+
       }
 
       if (infcnt == objective_counter-1) {
@@ -711,6 +792,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
     }
   }
+  cv.notify_all();
   solutionMutex.lock();
   all.merge(s);
   solutionMutex.unlock();
