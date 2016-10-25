@@ -371,14 +371,14 @@ int main (int argc, char *argv[])
   constexpr int width = 8;
   constexpr int precision = 2;
   outFile << std::endl << "---" << std::endl;
-  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << cpu_time_used << " CPU seconds" << std::endl;
-  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << elapsedtime << " elapsed seconds" << std::endl;
   ipcount_nonatomic = ipcount;
-  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << ipcount << " IPs solved" << std::endl;
-  outFile << std::setw(width) << std::setprecision(precision);
+  outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << solcount << " Solutions found" << std::endl;
 
   /* Free up memory as necessary. */
