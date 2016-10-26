@@ -83,8 +83,7 @@ int main (int argc, char *argv[])
 
   /* Timing */
   clock_t starttime, endtime;
-  time_t startelapsed;
-  double cpu_time_used, elapsedtime;
+  double cpu_time_used, elapsedtime, startelapsed;
   int solcount;
 
   int ipcount_nonatomic;
@@ -295,7 +294,7 @@ int main (int argc, char *argv[])
   starttime = clock();
   timespec start;
   clock_gettime(CLOCK_MONOTONIC, &start);
-  startelapsed = start.tv_sec;
+  startelapsed = start.tv_sec + start.tv_nsec/1e9;
 
 
   if (num_threads > S[p.objcnt].size())
@@ -339,7 +338,7 @@ int main (int argc, char *argv[])
   endtime = clock();
   cpu_time_used=((double) (endtime - starttime)) / CLOCKS_PER_SEC;
   clock_gettime(CLOCK_MONOTONIC, &start);
-  elapsedtime=(double) start.tv_sec - startelapsed;
+  elapsedtime = (start.tv_sec + start.tv_nsec/1e9 - startelapsed);
 
   //list = g_slist_sort(list, (GCompareFunc)icmp);
   //list = g_slist_reverse(list);
