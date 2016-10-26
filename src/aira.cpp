@@ -323,13 +323,13 @@ int main (int argc, char *argv[])
     }
     threads.emplace_back(optimise,
         t, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t]), std::ref(limits[t+1]), &limits[2]);
+        std::ref(limits[t]), std::ref(limits[t+1]), limits);
     // Odd number of threads
     if (t+1 == num_threads)
       continue;
     threads.emplace_back(optimise,
         t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t+1]), std::ref(limits[t]), &limits[2]);
+        std::ref(limits[t+1]), std::ref(limits[t]), limits);
   }
   for (auto& thread: threads)
     thread.join();
