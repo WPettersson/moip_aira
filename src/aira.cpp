@@ -583,6 +583,10 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         solnstat = solve(e, p, result, rhs, thread_id, ipcount);
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
       }
+      /* Store result */
+      if (!relaxed) {
+        s.insert(rhs, result, infeasible);
+      }
 #ifdef DEBUG
       debug_mutex.lock();
       std::cout << "Thread " << thread_id << " with constraints ";
@@ -650,10 +654,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
             min[j] = result[j];
           }
         }
-      }
-      /* Store result */
-      if (!relaxed) {
-        s.insert(rhs, result, infeasible);
       }
 
       if (infeasible && (infcnt == (p.objcnt-2)) && (num_threads > 1)) { // Wait/share results of 2-objective problem
