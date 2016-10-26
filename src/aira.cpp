@@ -368,7 +368,7 @@ int main (int argc, char *argv[])
   }
 
   constexpr int width = 8;
-  constexpr int precision = 2;
+  constexpr int precision = 3;
   outFile << std::endl << "---" << std::endl;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << cpu_time_used << " CPU seconds" << std::endl;
