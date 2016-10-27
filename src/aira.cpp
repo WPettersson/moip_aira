@@ -632,6 +632,19 @@ void optimise(int thread_id, Problem & p, Solutions & all,
             infeasible = true;
           }
         }
+        // Duplicate code as we are marking this result infeasible
+        /* Update maxima */
+        for (int j = 0; j < p.objcnt; j++) {
+          if (result[j] > max[j]) {
+            max[j] = result[j];
+          }
+        }
+        /* Update minima */
+        for (int j = 0; j < p.objcnt; j++) {
+          if (result[j] < min[j]) {
+            min[j] = result[j];
+          }
+        }
       }
       if (infeasible) {
         infcnt++;
