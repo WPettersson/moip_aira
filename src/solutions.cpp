@@ -5,11 +5,10 @@
 #include "solutions.h"
 
 const Result * Solutions::find(const double *ip, const Sense sense) const {
-  bool t1,t2,t3;
+  bool t1,t3;
   for (auto& res: store_) {
 
     t1 = true;
-    t2 = false;
     t3 = true;
     if (sense == MIN) {
       for (int i = 0; i < objective_count; i++){
@@ -18,11 +17,7 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
           t1 = false;
           break;
         }
-        /* t2: At least one inequality must be strict */
-        if (res->ip[i] > ip[i]) {
-          t2 = true;
-        }
-        /* t3: All values of candidate res->lt must be <= than ip */
+        /* t3: All values of candidate result must be <= than ip */
         if (!res->infeasible) {
           if (res->result[i] > ip[i]) {
             t3 = false;
@@ -30,8 +25,7 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
           }
         }
       }
-    }
-    else {
+    } else {
       for (int i = 0; i < objective_count; i++){
         /* t1: All values of candidate must be <= than ip */
         if (res->ip[i] > ip[i]) {
