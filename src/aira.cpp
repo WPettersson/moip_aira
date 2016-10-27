@@ -48,7 +48,7 @@ std::atomic<int> ipcount;
 const char *lpfn;
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount);
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -86,7 +86,6 @@ int main (int argc, char *argv[])
   double cpu_time_used, elapsedtime, startelapsed;
   int solcount;
 
-  int ipcount_nonatomic;
 
   po::variables_map v;
 
@@ -374,7 +373,6 @@ int main (int argc, char *argv[])
   outFile << cpu_time_used << " CPU seconds" << std::endl;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << elapsedtime << " elapsed seconds" << std::endl;
-  ipcount_nonatomic = ipcount;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << ipcount << " IPs solved" << std::endl;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
@@ -405,7 +403,7 @@ int main (int argc, char *argv[])
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, std::atomic<int> & ipcount) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 
   int cur_numcols, status, solnstat;
   double objval;
@@ -509,7 +507,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   double * rhs;
 
   result = resultStore = new int[p.objcnt];
-  int solnstat = solve(e, p, result, p.rhs, thread_id, ipcount);
+  int solnstat = solve(e, p, result, p.rhs, thread_id);
 
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
@@ -579,7 +577,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       } else {
         /* Solve in the absence of a relaxation*/
         result = resultStore;
-        solnstat = solve(e, p, result, rhs, thread_id, ipcount);
+        solnstat = solve(e, p, result, rhs, thread_id);
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
       }
       /* Store result */
