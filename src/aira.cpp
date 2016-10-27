@@ -522,12 +522,15 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
+  const int* perm = S[p.objcnt][thread_id];
 
+  if ((solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
+    partner_limit = rhs[perm[1]];
+  }
   for (int j = 0; j < p.objcnt; j++) {
     rhs[j] = p.rhs[j];
     min[j] = max[j] = result[j];
   }
-  const int* perm = S[p.objcnt][thread_id];
   for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
     int objective = perm[objective_counter];
     int depth_level = 1; /* Track current "recursion" depth */
@@ -545,10 +548,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         rhs[j] = -CPX_INFBOUND;
       }
     }
-    if (p.objcnt > 1 && (infcnt == 0)) {
-      partner_limit = rhs[perm[1]];
-      rhs[perm[0]] = my_limit;
-    }
     /* Set rhs of current depth */
     if (p.objsen == MIN) {
       rhs[objective] = max[objective]-1;
@@ -564,10 +563,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       /* Look for possible relaxations to the current problem*/
       const Result *relaxation;
 
-      if (p.objcnt > 1 && (infcnt == 0)) {
-        partner_limit = rhs[perm[1]];
-        rhs[perm[0]] = my_limit;
-      }
 
       relaxation = s.find(rhs, p.objsen);
       relaxed = (relaxation != nullptr);
@@ -583,6 +578,10 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       /* Store result */
       if (!relaxed) {
         s.insert(rhs, result, infeasible);
+      }
+      if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
+        partner_limit = rhs[perm[1]];
+      //  rhs[perm[0]] = my_limit;
       }
 #ifdef DEBUG
       debug_mutex.lock();
@@ -701,10 +700,18 @@ void optimise(int thread_id, Problem & p, Solutions & all,
               }
             }
           }
+          // We do modify partner_limit here, which normally we wouldn't do.
+          // However, we need to know that partner_limit is reset before this
+          // thread continues, and as there is no more waits, this is the
+          // easiest way of achieving this. Note that we reset limits before
+          // notifying the other thread, so the other thread will not start the
+          // next run until limits are reset too.
           if (p.objsen == MIN) {
             my_limit = CPX_INFBOUND;
+            partner_limit = CPX_INFBOUND;
           } else {
             my_limit = -CPX_INFBOUND;
+            partner_limit = -CPX_INFBOUND;
           }
           thread_status = RUNNING;
           cv.notify_all();
@@ -726,11 +733,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
                 min[o] = rest_limits[o];
               }
             }
-          }
-          if (p.objsen == MIN) {
-            my_limit = CPX_INFBOUND;
-          } else {
-            my_limit = -CPX_INFBOUND;
           }
         }
 
