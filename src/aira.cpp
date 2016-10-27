@@ -685,18 +685,17 @@ void optimise(int thread_id, Problem & p, Solutions & all,
           wait = true;
         } else if (thread_status == DONE) {
           for(int i = 2; i < p.objcnt; ++i) {
-            int o = perm[i];
             if (p.objsen == MIN) {
-              if (rest_limits[o] < max[o]) {
-                rest_limits[o] = max[o];
+              if (rest_limits[i] < max[i]) {
+                rest_limits[i] = max[i];
               } else {
-                max[o] = rest_limits[o];
+                max[i] = rest_limits[i];
               }
             } else {
-              if (rest_limits[o] > min[o]) {
-                rest_limits[o] = min[o];
+              if (rest_limits[i] > min[i]) {
+                rest_limits[i] = min[i];
               } else {
-                min[o] = rest_limits[o];
+                min[i] = rest_limits[i];
               }
             }
           }
@@ -723,14 +722,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
           cv.wait(lk);
           wait_mutex.unlock();
           for(int i = 2; i < p.objcnt; ++i) {
-            int o = perm[i];
             if (p.objsen == MIN) {
-              if (rest_limits[o] > max[o]) {
-                max[o] = rest_limits[o];
+              if (rest_limits[i] > max[i]) {
+                max[i] = rest_limits[i];
               }
             } else {
-              if (rest_limits[o] < min[o]) {
-                min[o] = rest_limits[o];
+              if (rest_limits[i] < min[i]) {
+                min[i] = rest_limits[i];
               }
             }
           }
