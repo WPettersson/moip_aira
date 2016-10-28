@@ -48,7 +48,7 @@ std::atomic<int> ipcount;
 const char *lpfn;
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, double& cplex_time);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -403,7 +403,7 @@ int main (int argc, char *argv[])
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, double& cplex_time) {
 
   int cur_numcols, status, solnstat;
   double objval;
@@ -417,7 +417,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
   memcpy(srhs, rhs, p.objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(e.env, e.lp);
-
+  timespec times;
 
   // TODO Permutation applies here.
   for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
@@ -432,8 +432,12 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
       fprintf (stderr, "Failed to change constraint srhs\n");
     }
 
+    clock_gettime(CLOCK_MONOTONIC, &times);
+    double starttime = (times.tv_sec + times.tv_nsec/1e9);
     /* solve for current objective*/
     status = CPXmipopt (e.env, e.lp);
+    clock_gettime(CLOCK_MONOTONIC, &times);
+    cplex_time += (times.tv_sec + times.tv_nsec/1e9) - starttime;
     if (status) {
        fprintf (stderr, "Failed to optimize LP.\n");
     }
@@ -465,6 +469,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   Env e;
   Solutions s(p.objcnt);
   int status;
+  double cplex_time = 0;
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
 
@@ -507,7 +512,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   double * rhs;
 
   result = resultStore = new int[p.objcnt];
-  int solnstat = solve(e, p, result, p.rhs, thread_id);
+  int solnstat = solve(e, p, result, p.rhs, thread_id, cplex_time);
 
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
@@ -572,7 +577,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       } else {
         /* Solve in the absence of a relaxation*/
         result = resultStore;
-        solnstat = solve(e, p, result, rhs, thread_id);
+        solnstat = solve(e, p, result, rhs, thread_id, cplex_time);
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
       }
       /* Store result */
@@ -804,6 +809,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   }
   cv.notify_all();
   solutionMutex.lock();
+  std::cout << "Thread " << thread_id << " used " << cplex_time << "s in cplex" << std::endl;
   all.merge(s);
   solutionMutex.unlock();
   delete[] resultStore;
