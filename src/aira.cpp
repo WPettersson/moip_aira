@@ -314,23 +314,25 @@ int main (int argc, char *argv[])
   // memory constraints.
   std::atomic<double> *limits = new std::atomic<double>[p.objcnt];
 
-  for(int t = 0; t < num_threads; t += 2) {
-    if (p.objsen == MIN) {
-      limits[t] = CPX_INFBOUND;
-      limits[t+1] = CPX_INFBOUND;
-    } else {
-      limits[t] = -CPX_INFBOUND;
-      limits[t+1] = -CPX_INFBOUND;
-    }
+  if (p.objsen == MIN) {
+    limits[0] = CPX_INFBOUND;
+    limits[1] = CPX_INFBOUND;
+  } else {
+    limits[0] = -CPX_INFBOUND;
+    limits[1] = -CPX_INFBOUND;
+  }
+  std::list<int *> *t1_solns = new std::list<int *>;
+  std::list<int *> *t2_solns = new std::list<int *>;
+  threads.emplace_back(optimise,
+      0, std::ref(p), std::ref(all), std::ref(solutionMutex),
+      std::ref(limits[0]), std::ref(limits[1]), limits,
+      t1_solns, t2_solns);
+  // Odd number of threads
+  if (num_threads == 2) {
     threads.emplace_back(optimise,
-        t, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t]), std::ref(limits[t+1]), limits);
-    // Odd number of threads
-    if (t+1 == num_threads)
-      continue;
-    threads.emplace_back(optimise,
-        t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[t+1]), std::ref(limits[t]), limits);
+        1, std::ref(p), std::ref(all), std::ref(solutionMutex),
+        std::ref(limits[1]), std::ref(limits[0]), limits,
+        t2_solns, t1_solns);
   }
   for (auto& thread: threads)
     thread.join();
