@@ -34,10 +34,11 @@ std::mutex debug_mutex;
 
 /* The threads need to synchronise the limits on objectives 3 through n */
 std::mutex status_mutex;
-std::mutex wait_mutex;
+std::mutex ready_mutex;
 enum Status { RUNNING, DONE };
 std::atomic<Status> thread_status;
 std::condition_variable cv;
+std::condition_variable ready_cv;
 
 int num_threads;
 
@@ -57,7 +58,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, doubl
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit, std::atomic<double> *rest_limits);
+void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit, std::atomic<double> *rest_limits,
+    std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -465,11 +467,16 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, doubl
 
 void optimise(int thread_id, Problem & p, Solutions & all,
     std::mutex &solutionMutex, std::atomic<double> & my_limit,
-    std::atomic<double> & partner_limit, std::atomic<double> *rest_limits) {
+    std::atomic<double> & partner_limit, std::atomic<double> *rest_limits,
+    std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles) {
   Env e;
   Solutions s(p.objcnt);
   int status;
   double cplex_time = 0;
+  double wait_time = 0;
+  timespec start;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  double total_time = start.tv_sec + start.tv_nsec/1e9;
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
 
@@ -516,6 +523,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
+  if (solnstat != CPXMIP_INFEASIBLE) {
+    int *objectives = new int[p.objcnt];
+    for (int i = 0; i < p.objcnt; ++i) {
+      objectives[i] = result[i];
+    }
+    partner_feasibles->push_back(objectives);
+  }
 #ifdef DEBUG
     std::cout << "Thread " << thread_id << " with constraints ∞* found ";
         for(int i = 0; i < p.objcnt; ++i) {
@@ -583,6 +597,15 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       /* Store result */
       if (!relaxed) {
         s.insert(rhs, result, infeasible);
+      }
+      /* We want to keep the actual objective vector, and share it with our
+        * partner as a relaxation. */
+      if (!infeasible) {
+        int *objectives = new int[p.objcnt];
+        for (int i = 0; i < p.objcnt; ++i) {
+          objectives[i] = result[i];
+        }
+        partner_feasibles->push_back(objectives);
       }
       if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
         partner_limit = rhs[perm[1]];
@@ -676,69 +699,236 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         std::cout << "Thread " << thread_id <<  " done" << std::endl;
         debug_mutex.unlock();
 #endif
-        status_mutex.lock();
         bool wait = false;
-        if (thread_status == RUNNING) {
-          thread_status = DONE;
-          for(int i = 2; i < p.objcnt; ++i) {
-            if (p.objsen == MIN) {
-              rest_limits[i] = max[i];
-            } else {
-              rest_limits[i] = min[i];
-            }
-          }
-          wait = true;
-        } else if (thread_status == DONE) {
-          for(int i = 2; i < p.objcnt; ++i) {
-            if (p.objsen == MIN) {
-              if (rest_limits[i] < max[i]) {
+        {
+          std::unique_lock<std::mutex> lk(status_mutex);
+          if (thread_status == RUNNING) {
+            thread_status = DONE; // This thread was first in.
+            for(int i = 2; i < p.objcnt; ++i) {
+              if (p.objsen == MIN) {
                 rest_limits[i] = max[i];
               } else {
-                max[i] = rest_limits[i];
-              }
-            } else {
-              if (rest_limits[i] > min[i]) {
                 rest_limits[i] = min[i];
+              }
+            }
+            wait = true;
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            double start_wait = start.tv_sec + start.tv_nsec/1e9;
+            cv.wait(lk); // Wait for partner to update limits.
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
+            for(int i = 2; i < p.objcnt; ++i) {
+              if (p.objsen == MIN) {
+                if (rest_limits[i] > max[i]) {
+                  max[i] = rest_limits[i];
+                }
               } else {
-                min[i] = rest_limits[i];
+                if (rest_limits[i] < min[i]) {
+                  min[i] = rest_limits[i];
+                }
               }
             }
-          }
-          // We do modify partner_limit here, which normally we wouldn't do.
-          // However, we need to know that partner_limit is reset before this
-          // thread continues, and as there is no more waits, this is the
-          // easiest way of achieving this. Note that we reset limits before
-          // notifying the other thread, so the other thread will not start the
-          // next run until limits are reset too.
-          if (p.objsen == MIN) {
-            my_limit = CPX_INFBOUND;
-            partner_limit = CPX_INFBOUND;
-          } else {
-            my_limit = -CPX_INFBOUND;
-            partner_limit = -CPX_INFBOUND;
-          }
-          thread_status = RUNNING;
-          cv.notify_all();
-        }
-        status_mutex.unlock();
+            /* From each feasible result that our partner calculated, we can
+            * "make up" an IP problem which would have that result as it's
+            * solution. Since we know that the list from our partner, combined
+            * with our own results, is the complete list of solutions, this is
+            * doable. */
+            if (!my_feasibles->empty()) {
+              double *lp = new double[p.objcnt];
+              for( int i = 2; i < p.objcnt; ++i) {
+                lp[perm[i]] = rhs[perm[i]];
+              }
+              if (p.objsen == MIN) {
+                lp[perm[0]] = CPX_INFBOUND;
+              } else {
+                lp[perm[0]] = -CPX_INFBOUND;
+              }
+              int *res = my_feasibles->front();
+              my_feasibles->pop_front();
+              if (p.objsen == MIN) {
+                lp[perm[1]] = res[perm[1]] - 1;
+              } else {
+                lp[perm[1]] = res[perm[1]] + 1;
+              }
+#ifdef DEBUG
+              debug_mutex.lock();
+              std::cout << "Thread " << thread_id << " adding relaxation ";
+              for (int j = 0; j < p.objcnt; ++j) {
+                if (lp[j] > 1e19)
+                  std::cout << "+∞,";
+                else if (lp[j] < -1e19)
+                  std::cout << "-∞,";
+                else
+                  std::cout << lp[j] << ",";
+              }
+              std::cout << " with result infeasible";
+              std::cout << std::endl;
+              debug_mutex.unlock();
+#endif
+              s.insert(lp, res, false);
+              int *last = res;
+              while (! my_feasibles->empty()) {
+                res = my_feasibles->front();
+                my_feasibles->pop_front();
+                if (p.objsen == MIN) {
+                  lp[perm[1]] = res[perm[1]] - 1;
+                } else {
+                  lp[perm[1]] = res[perm[1]] + 1;
+                }
+#ifdef DEBUG
+                debug_mutex.lock();
+                std::cout << "Thread " << thread_id << " adding relaxation ";
+                for (int j = 0; j < p.objcnt; ++j) {
+                  if (lp[j] > 1e19)
+                    std::cout << "+∞,";
+                  else if (lp[j] < -1e19)
+                    std::cout << "-∞,";
+                  else
+                    std::cout << lp[j] << ",";
+                }
+                std::cout << " with result ";
+                for (int j = 0; j < p.objcnt; ++j) {
+                  if (last[j] > 1e19)
+                    std::cout << "+∞,";
+                  else if (last[j] < -1e19)
+                    std::cout << "-∞,";
+                  else
+                    std::cout << last[j] << ",";
+                }
+                std::cout << std::endl;
+                debug_mutex.unlock();
+#endif
+                s.insert(lp, last, true);
+                delete[] last;
+                last = res;
+              }
+              delete[] last;
+              delete[] lp;
+            }
+          } else if (thread_status == DONE) {
+            // This thread can't be first in, so must be last.
+            for(int i = 2; i < p.objcnt; ++i) {
+              if (p.objsen == MIN) {
+                if (rest_limits[i] < max[i]) {
+                  rest_limits[i] = max[i];
+                } else {
+                  max[i] = rest_limits[i];
+                }
+              } else {
+                if (rest_limits[i] > min[i]) {
+                  rest_limits[i] = min[i];
+                } else {
+                  min[i] = rest_limits[i];
+                }
+              }
+            }
+            /* From each feasible result that our partner calculated, we can
+            * "make up" an IP problem which would have that result as it's
+            * solution. Since we know that the list from our partner, combined
+            * with our own results, is the complete list of solutions, this is
+            * doable. */
+            if (! my_feasibles->empty()) {
+              double *lp = new double[p.objcnt];
+              for( int i = 2; i < p.objcnt; ++i) {
+                lp[perm[i]] = rhs[perm[i]];
+              }
+              if (p.objsen == MIN) {
+                lp[perm[0]] = CPX_INFBOUND;
+              } else {
+                lp[perm[0]] = -CPX_INFBOUND;
+              }
+              int *res = my_feasibles->front();
+              my_feasibles->pop_front();
+              if (p.objsen == MIN) {
+                lp[perm[1]] = res[perm[1]] - 1;
+              } else {
+                lp[perm[1]] = res[perm[1]] + 1;
+              }
+#ifdef DEBUG
+              debug_mutex.lock();
+              std::cout << "Thread " << thread_id << " adding relaxation ";
+              for (int j = 0; j < p.objcnt; ++j) {
+                if (lp[j] > 1e19)
+                  std::cout << "+∞,";
+                else if (lp[j] < -1e19)
+                  std::cout << "-∞,";
+                else
+                  std::cout << lp[j] << ",";
+              }
+              std::cout << " with result infeasible";
+              std::cout << std::endl;
+              debug_mutex.unlock();
+#endif
+              s.insert(lp, res, false);
+              int *last = res;
+              while (! my_feasibles->empty()) {
+                res = my_feasibles->front();
+                my_feasibles->pop_front();
+                if (p.objsen == MIN) {
+                  lp[perm[1]] = res[perm[1]] - 1;
+                } else {
+                  lp[perm[1]] = res[perm[1]] + 1;
+                }
+#ifdef DEBUG
+                debug_mutex.lock();
+                std::cout << "Thread " << thread_id << " adding relaxation ";
+                for (int j = 0; j < p.objcnt; ++j) {
+                  if (lp[j] > 1e19)
+                    std::cout << "+∞,";
+                  else if (lp[j] < -1e19)
+                    std::cout << "-∞,";
+                  else
+                    std::cout << lp[j] << ",";
+                }
+                std::cout << " with result ";
+                for (int j = 0; j < p.objcnt; ++j) {
+                  if (last[j] > 1e19)
+                    std::cout << "+∞,";
+                  else if (last[j] < -1e19)
+                    std::cout << "-∞,";
+                  else
+                    std::cout << last[j] << ",";
+                }
+                std::cout << std::endl;
+                debug_mutex.unlock();
+#endif
+                s.insert(lp, last, true);
+                delete[] last;
+                last = res;
+              }
+              delete[] last;
+              delete[] lp;
+            }
 
-        if (wait) {
-          std::unique_lock<std::mutex> lk(wait_mutex);
-          cv.wait(lk);
-          wait_mutex.unlock();
-          for(int i = 2; i < p.objcnt; ++i) {
+            /* We do modify partner_limit here, which normally we wouldn't do.
+            * However, we need to know that partner_limit is reset before this
+            * thread continues, and as there is no more waits, this is the
+            * easiest way of achieving this. Note that we reset limits before
+            * notifying the other thread, so the other thread will not start the
+            * next run until limits are reset too. */
             if (p.objsen == MIN) {
-              if (rest_limits[i] > max[i]) {
-                max[i] = rest_limits[i];
-              }
+              my_limit = CPX_INFBOUND;
+              partner_limit = CPX_INFBOUND;
             } else {
-              if (rest_limits[i] < min[i]) {
-                min[i] = rest_limits[i];
-              }
+              my_limit = -CPX_INFBOUND;
+              partner_limit = -CPX_INFBOUND;
+            }
+            thread_status = RUNNING;
+            lk.unlock();
+            cv.notify_all();
+            {
+              std::unique_lock<std::mutex> ready_lk(ready_mutex);
+              clock_gettime(CLOCK_MONOTONIC, &start);
+              double start_wait = start.tv_sec + start.tv_nsec/1e9;
+              ready_cv.wait(ready_lk);
+              clock_gettime(CLOCK_MONOTONIC, &start);
+              wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
             }
           }
         }
-
+        if (wait) {
+          ready_cv.notify_all();
+        }
       }
 
       if (infcnt == objective_counter-1) {
@@ -746,8 +936,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         for (int j = 0; j < p.objcnt; j++) {
           if (p.objsen == MIN) {
             rhs[j] = CPX_INFBOUND;
-          }
-          else {
+          } else {
             rhs[j] = -CPX_INFBOUND;
           }
         }
@@ -757,8 +946,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         if (p.objsen == MIN) {
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
-        }
-        else {
+        } else {
           rhs[objective] = min[objective]+1;
           min[objective] = (int) CPX_INFBOUND;
         }
@@ -767,39 +955,33 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         depth_level = 1;
         depth = perm[depth_level];
         onwalk = false;
-      }
-      else if (inflast && infcnt != objective_counter) {
+      } else if (inflast && infcnt != objective_counter) {
         rhs[depth] = CPX_INFBOUND;
         depth_level++;
         depth = perm[depth_level];
         if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
-        }
-        else {
+        } else {
           rhs[depth] = min[depth]+1;
           min[depth] = (int) CPX_INFBOUND;
         }
         onwalk = true;
-      }
-      else if (!onwalk && infcnt != 1) {
+      } else if (!onwalk && infcnt != 1) {
         if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
-        }
-        else {
+        } else {
           rhs[depth] = min[depth]+1;
           min[depth] = (int) CPX_INFBOUND;
         }
-      }
-      else if (onwalk && infcnt != 1)  {
+      } else if (onwalk && infcnt != 1)  {
         depth_level = 1;
         depth = perm[depth_level];
         if (p.objsen == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
-        }
-        else {
+        } else {
           rhs[depth] = min[depth]+1;
           min[depth] = (int) CPX_INFBOUND;
         }
@@ -808,8 +990,12 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     }
   }
   cv.notify_all();
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  total_time = start.tv_sec + start.tv_nsec/1e9 - total_time;
+  std::cout << "Thread " << thread_id << " used " << cplex_time << "s in cplex";
+  std::cout << ", waited for " << wait_time << "s";
+  std::cout << " and " << total_time << "s overall." << std::endl;
   solutionMutex.lock();
-  std::cout << "Thread " << thread_id << " used " << cplex_time << "s in cplex" << std::endl;
   all.merge(s);
   solutionMutex.unlock();
   delete[] resultStore;
