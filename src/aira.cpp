@@ -463,6 +463,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, doubl
     result[j] = srhs[j] = round(objval);
   }
 
+  delete[] srhs;
+
   return solnstat;
 }
 
@@ -546,7 +548,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   const int* perm = S[p.objcnt][thread_id];
 
   if ((solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
-    partner_limit = rhs[perm[1]];
+    partner_limit = result[perm[1]];
   }
   for (int j = 0; j < p.objcnt; j++) {
     rhs[j] = p.rhs[j];
