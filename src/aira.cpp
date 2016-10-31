@@ -27,6 +27,7 @@
 #define ERR_CPLEX -1
 
 //#define DEBUG
+//#define FINETIMING
 
 #ifdef DEBUG
 std::mutex debug_mutex;
@@ -49,7 +50,7 @@ std::atomic<int> ipcount;
 const char *lpfn;
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, double& cplex_time);
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -58,7 +59,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, doubl
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, Solutions &all, std::mutex & solutionMutex, std::atomic<double>& my_limit, std::atomic<double>& partner_limit, std::atomic<double> *rest_limits,
+void optimise(int thread_id, Problem & p, Solutions &all,
+    std::mutex & solutionMutex, std::atomic<double>& my_limit,
+    std::atomic<double>& partner_limit, std::atomic<double> *rest_limits,
     std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
@@ -407,7 +410,7 @@ int main (int argc, char *argv[])
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, double& cplex_time) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 
   int cur_numcols, status, solnstat;
   double objval;
@@ -436,12 +439,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id, doubl
       fprintf (stderr, "Failed to change constraint srhs\n");
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &times);
-    double starttime = (times.tv_sec + times.tv_nsec/1e9);
     /* solve for current objective*/
     status = CPXmipopt (e.env, e.lp);
-    clock_gettime(CLOCK_MONOTONIC, &times);
-    cplex_time += (times.tv_sec + times.tv_nsec/1e9) - starttime;
     if (status) {
        fprintf (stderr, "Failed to optimize LP.\n");
     }
@@ -476,11 +475,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   Env e;
   Solutions s(p.objcnt);
   int status;
+#ifdef FINETIMING
   double cplex_time = 0;
   double wait_time = 0;
   timespec start;
   clock_gettime(CLOCK_MONOTONIC, &start);
   double total_time = start.tv_sec + start.tv_nsec/1e9;
+#endif
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
 
@@ -523,7 +524,15 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   double * rhs;
 
   result = resultStore = new int[p.objcnt];
-  int solnstat = solve(e, p, result, p.rhs, thread_id, cplex_time);
+#ifdef FINETIMING
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  double starttime = (start.tv_sec + start.tv_nsec/1e9);
+#endif
+  int solnstat = solve(e, p, result, p.rhs, thread_id);
+#ifdef FINETIMING
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
+#endif
 
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
@@ -595,7 +604,15 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       } else {
         /* Solve in the absence of a relaxation*/
         result = resultStore;
-        solnstat = solve(e, p, result, rhs, thread_id, cplex_time);
+#ifdef FINETIMING
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        double starttime = (start.tv_sec + start.tv_nsec/1e9);
+#endif
+        solnstat = solve(e, p, result, rhs, thread_id);
+#ifdef FINETIMING
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
+#endif
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
       }
       /* Store result */
@@ -716,11 +733,15 @@ void optimise(int thread_id, Problem & p, Solutions & all,
               }
             }
             wait = true;
+#ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
+#endif
             cv.wait(lk); // Wait for partner to update limits.
+#ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
+#endif
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
                 if (rest_limits[i] > max[i]) {
@@ -934,12 +955,16 @@ void optimise(int thread_id, Problem & p, Solutions & all,
           std::unique_lock<std::mutex> ready_lk(ready_mutex);
           // Notify first thread to keep going
           cv.notify_all();
+#ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           double start_wait = start.tv_sec + start.tv_nsec/1e9;
+#endif
           // Wait for first thread to be ready
           ready_cv.wait(ready_lk);
+#ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
+#endif
         }
       }
 
@@ -1002,11 +1027,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     }
   }
   cv.notify_all();
+#ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   total_time = start.tv_sec + start.tv_nsec/1e9 - total_time;
   std::cout << "Thread " << thread_id << " used " << cplex_time << "s in cplex";
   std::cout << ", waited for " << wait_time << "s";
   std::cout << " and " << total_time << "s overall." << std::endl;
+#endif
   solutionMutex.lock();
   all.merge(s);
   solutionMutex.unlock();
