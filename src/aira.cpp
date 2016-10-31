@@ -918,20 +918,28 @@ void optimise(int thread_id, Problem & p, Solutions & all,
               partner_limit = -CPX_INFBOUND;
             }
             thread_status = RUNNING;
-            lk.unlock();
-            cv.notify_all();
-            {
-              std::unique_lock<std::mutex> ready_lk(ready_mutex);
-              clock_gettime(CLOCK_MONOTONIC, &start);
-              double start_wait = start.tv_sec + start.tv_nsec/1e9;
-              ready_cv.wait(ready_lk);
-              clock_gettime(CLOCK_MONOTONIC, &start);
-              wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
-            }
           }
         }
-        if (wait) {
+        if(wait) {
+          // Make sure that the second thread has finished its tasks.
+          // Note that we have to wait for this as otherwise we might notify
+          // the second thread before it is ready to be notified (causing 2nd
+          // thread to get stuck forever).
+          {
+            std::unique_lock<std::mutex> ready_lk(ready_mutex);
+          }
+          // Tell second thread to run.
           ready_cv.notify_all();
+        } else {
+          std::unique_lock<std::mutex> ready_lk(ready_mutex);
+          // Notify first thread to keep going
+          cv.notify_all();
+          clock_gettime(CLOCK_MONOTONIC, &start);
+          double start_wait = start.tv_sec + start.tv_nsec/1e9;
+          // Wait for first thread to be ready
+          ready_cv.wait(ready_lk);
+          clock_gettime(CLOCK_MONOTONIC, &start);
+          wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
         }
       }
 
