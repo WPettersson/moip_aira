@@ -1,8 +1,16 @@
 
 #include <cstring>
 
+#ifdef DEBUG
+#include <mutex>
+#endif
+
 #include "result.h"
 #include "solutions.h"
+
+#ifdef DEBUG
+extern std::mutex debug_mutex;
+#endif
 
 const Result * Solutions::find(const double *ip, const Sense sense) const {
   bool t1,t3;
@@ -43,6 +51,28 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
     }
     /* If all conditions are met copy problem & solution and return */
     if (t1 && t3) {
+#ifdef DEBUG
+      debug_mutex.lock();
+      std::cout << " relaxed to ";
+      for(int i = 0; i < objective_count; ++i) {
+        if (res->ip[i] > 1e19)
+          std::cout << "∞,";
+        else if (res->ip[i] < -1e19)
+          std::cout << "-∞,";
+        else
+          std::cout << res->ip[i] << ",";
+      }
+      std::cout << " soln is ";
+      if (res->infeasible) {
+        std::cout << "infeasible";
+      } else {
+        for(int i = 0; i < objective_count; ++i) {
+          std::cout << res->result[i] << ",";
+        }
+      }
+      std::cout << std::endl;
+      debug_mutex.unlock();
+#endif
       return res;
     }
   }
@@ -57,8 +87,7 @@ void Solutions::insert(const double *lp, const int *result,
   if (infeasible) {
     r->infeasible = true;
     r->result = nullptr;
-  }
-  else {
+  } else {
     r->infeasible = false;
     r->result = new int[objective_count];
     std::memcpy(r->result, result, objective_count * sizeof(int));
