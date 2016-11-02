@@ -424,7 +424,6 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
   memcpy(srhs, rhs, p.objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(e.env, e.lp);
-  timespec times;
 
   // TODO Permutation applies here.
   for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
@@ -614,9 +613,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
         infeasible = (solnstat == CPXMIP_INFEASIBLE);
-      }
-      /* Store result */
-      if (!relaxed) {
+        /* Store result */
         s.insert(rhs, result, infeasible);
       }
       /* We want to keep the actual objective vector, and share it with our
@@ -790,7 +787,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
               std::cout << std::endl;
               debug_mutex.unlock();
 #endif
-              s.insert(lp, res, false);
+              s.insert(lp, res, true);
               int *last = res;
               while (! my_feasibles->empty()) {
                 res = my_feasibles->front();
@@ -823,7 +820,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
                 std::cout << std::endl;
                 debug_mutex.unlock();
 #endif
-                s.insert(lp, last, true);
+                s.insert(lp, last, false);
                 delete[] last;
                 last = res;
               }
@@ -884,7 +881,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
               std::cout << std::endl;
               debug_mutex.unlock();
 #endif
-              s.insert(lp, res, false);
+              s.insert(lp, res, true);
               int *last = res;
               while (! my_feasibles->empty()) {
                 res = my_feasibles->front();
@@ -917,7 +914,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
                 std::cout << std::endl;
                 debug_mutex.unlock();
 #endif
-                s.insert(lp, last, true);
+                s.insert(lp, last, false);
                 delete[] last;
                 last = res;
               }
@@ -1026,7 +1023,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
     }
   }
-  cv.notify_all();
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   total_time = start.tv_sec + start.tv_nsec/1e9 - total_time;
