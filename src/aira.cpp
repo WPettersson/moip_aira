@@ -1023,6 +1023,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
       }
     }
   }
+  solutionMutex.lock();
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   total_time = start.tv_sec + start.tv_nsec/1e9 - total_time;
@@ -1030,7 +1031,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   std::cout << ", waited for " << wait_time << "s";
   std::cout << " and " << total_time << "s overall." << std::endl;
 #endif
-  solutionMutex.lock();
   all.merge(s);
   solutionMutex.unlock();
   delete[] resultStore;
