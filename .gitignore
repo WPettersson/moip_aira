@@ -1,0 +1,4 @@
+src/symgroup.cpp
+src/symgroup_extern.h
+debug/*
+build/*
