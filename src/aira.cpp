@@ -43,6 +43,8 @@ std::condition_variable ready_cv;
 
 int num_threads;
 
+double midpoint = 0;
+bool split;
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
 
@@ -105,6 +107,10 @@ int main (int argc, char *argv[])
     ("output,o",
       po::value<std::string>(&outputFilename),
      "The output file. Optional.")
+    ("split,s",
+     po::bool_switch(&split),
+     "Split the range of the first objective into one strip per thread\n"
+     "Optional, default to False.")
     ("threads,t",
       po::value<int>(&num_threads)->default_value(1),
      "Number of threads to use internally. Optional, default to 1.")
@@ -533,6 +539,20 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
 
+  // Share the midpoint if splitting
+  if (split && num_threads > 1) {
+    std::unique_lock<std::mutex> lk(status_mutex);
+    if (midpoint == 0) {
+      // First in, wait.
+      midpoint += ((double)result[0])/2;
+      cv.wait(lk);
+    } else {
+      // Second in, update and keep going
+      midpoint += ((double)result[0])/2;
+      cv.notify_all();
+    }
+  }
+
   /* Need to add a result to the list here*/
   s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
   if (solnstat != CPXMIP_INFEASIBLE) {
@@ -573,10 +593,16 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     /* Set all contraints back to infinity*/
     for (int j = 0; j < p.objcnt; j++) {
       if (p.objsen == MIN) {
-        rhs[j] = CPX_INFBOUND;
+        if (split && (thread_id == 0) && (j == 0))
+          rhs[j] = midpoint;
+        else
+          rhs[j] = CPX_INFBOUND;
       }
       else {
-        rhs[j] = -CPX_INFBOUND;
+        if (split && (thread_id == 0) && (j == 0))
+          rhs[j] = midpoint;
+        else
+          rhs[j] = -CPX_INFBOUND;
       }
     }
     /* Set rhs of current depth */
@@ -616,18 +642,40 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         /* Store result */
         s.insert(rhs, result, infeasible);
       }
-      /* We want to keep the actual objective vector, and share it with our
-        * partner as a relaxation. */
-      if (!infeasible) {
-        int *objectives = new int[p.objcnt];
-        for (int i = 0; i < p.objcnt; ++i) {
-          objectives[i] = result[i];
+      if (split) {
+        if ((thread_id == 1) && !infeasible) {
+          // check if we cross midpoint if we are thread 1
+          if (p.objsen == MIN) {
+            if (result[0] < midpoint) {
+              infeasible = true;
+#ifdef DEBUG
+              debug_mutex.lock();
+              std::cout << "Thread " << thread_id << " reached midpoint";
+              std::cout << " " << midpoint << std::endl;
+              debug_mutex.unlock();
+#endif
+            }
+          } else {
+            if (result[0] > midpoint) {
+              infeasible = true;
+            }
+          }
         }
-        partner_feasibles->push_back(objectives);
-      }
-      if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
-        partner_limit = rhs[perm[1]];
-      //  rhs[perm[0]] = my_limit;
+      } else {
+        // Not splitting.
+        /* We want to keep the actual objective vector, and share it with our
+        * partner as a relaxation. */
+        if (!infeasible) {
+          int *objectives = new int[p.objcnt];
+          for (int i = 0; i < p.objcnt; ++i) {
+            objectives[i] = result[i];
+          }
+          partner_feasibles->push_back(objectives);
+        }
+        if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
+          partner_limit = rhs[perm[1]];
+        //  rhs[perm[0]] = my_limit;
+        }
       }
 #ifdef DEBUG
       debug_mutex.lock();
