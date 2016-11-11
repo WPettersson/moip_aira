@@ -9,7 +9,9 @@ CFLAGS = -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
 CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/
 LIBS=-pthread -lcplex -lboost_program_options
 
-all: aira
+all: executable
+
+executable: $(TARGETDIR)/aira
 
 OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o
 
@@ -18,6 +20,9 @@ $(TARGETDIR):
 
 clean:
 	rm -Rf ./build ./debug
+
+test: executable
+	@TARGETDIR=.$(TARGETDIR) make -C tests
 
 aira: $(TARGETDIR) $(OBJS)
 	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
