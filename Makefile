@@ -24,7 +24,7 @@ clean:
 test: executable
 	@TARGETDIR=.$(TARGETDIR) make -C tests
 
-aira: $(TARGETDIR) $(OBJS)
+$(TARGETDIR)/aira: $(TARGETDIR) $(OBJS)
 	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
 $(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h
