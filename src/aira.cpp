@@ -54,6 +54,8 @@ const char *lpfn;
 /* Solve CLMOIP and return status */
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
 
+int read_lp_problem(const char* filename, Env& e, Problem& p);
+
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
  * objective values.
@@ -74,14 +76,6 @@ int main (int argc, char *argv[])
 {
 
   int status = 0; /* Operation status */
-
-  /* LP File Processing  */
-  int from, to; /* First row, last row */
-  int cur_numrows, cur_numcols, cur_numnz; /* # rows in current problem, # cols, # nonzero values*/
-  int rmatspace; /* Length of rmatind & rmatval */
-  int nzcnt, surplus; /* Nonzero row value count, array length check */
-  int *rmatbeg, *rmatind; /* Row indices, column indices of rmatval */
-  double *rmatval; /* Constraint RHS, relaxation ip, nozero row values */
 
   Problem p;
   Env e;
@@ -171,132 +165,14 @@ int main (int argc, char *argv[])
     return -ERR_CPLEX;
   }
 
- status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
- if (status) {
-   fprintf (stderr,
-       "Failure to turn off screen indicator, error %d.\n", status);
-    return -ERR_CPLEX;
- }
-
-  /* Create the problem, using the filename as the problem name */
-  e.lp = CPXcreateprob(e.env, &status, lpfn);
-
-  if (e.lp == NULL) {
-    fprintf (stderr, "Failed to create LP.\n");
-    return -ERR_CPLEX;
-  }
-
-  /* Now read the file, and copy the data into the created lp */
-  status = CPXreadcopyprob(e.env, e.lp, lpfn, NULL);
+  status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
   if (status) {
-    fprintf (stderr, "Failed to read and copy the problem data.\n");
-    return -ERR_CPLEX;
+    fprintf (stderr,
+        "Failure to turn off screen indicator, error %d.\n", status);
+      return -ERR_CPLEX;
   }
 
-  /* Get last rhs and determine the number of objectives.*/
-  cur_numcols = CPXgetnumcols(e.env, e.lp);
-  cur_numrows = CPXgetnumrows(e.env, e.lp);
-  cur_numnz = CPXgetnumnz(e.env, e.lp);
-
-  p.rhs = new double[cur_numrows];
-
-  /* Get RHS of last objective - this tells us the objective count */
-  status = CPXgetrhs (e.env, e.lp, p.rhs, cur_numrows-1, cur_numrows-1);
-
-  if (status) {
-    fprintf (stderr, "Failed to get RHS.\n");
-    return -ERR_CPLEX;
-  }
-
-  p.objcnt = static_cast<int>(p.rhs[0]);
-
-  /* Create a pair of multidimensional arrays to store the objective
-   * coefficients and their indices indices first */
-  p.objind = new int*[p.objcnt];
-  for(int j = 0; j < p.objcnt; j++) {
-    p.objind[j] = new int[cur_numcols];
-    for(int i = 0; i < cur_numcols; i++){
-      p.objind[j][i] = i;
-    }
-  }
-  /* Now coefficients */
-  p.objcoef = new double*[p.objcnt];
-  for(int j = 0; j < p.objcnt; j++) {
-    p.objcoef[j] = new double[cur_numcols];
-    memset(p.objcoef[j], 0, cur_numcols * sizeof(double));
-  }
-
-  /* Parse out the objectives working backwards from the last constraint */
-  rmatbeg = new int[cur_numrows];
-  rmatind = new int[cur_numnz];
-  rmatval = new double[cur_numnz];
-  rmatspace = cur_numnz;
-
-  status = CPXgetrows (e.env, e.lp, &nzcnt, rmatbeg, rmatind, rmatval,
-                      rmatspace, &surplus, cur_numrows-p.objcnt, cur_numrows-1);
-
-  if (status) {
-    fprintf (stderr, "Couldn't get rows.\n");
-    return -ERR_CPLEX;
-  }
-
-  for (int j = 0; j < p.objcnt; j++) {
-    from = rmatbeg[j];
-    if (j == p.objcnt-1) {
-      to = nzcnt-1;
-    }
-    else {
-      to = rmatbeg[(j+1)] - 1;
-    }
-    for (int k = from; k <= to; k++){
-      p.objcoef[j][rmatind[k]] = rmatval[k];
-    }
-  }
-  delete[] rmatbeg;
-  delete[] rmatind;
-  delete[] rmatval;
-
-  /* Setup problem for solving */
-
-  /* Resize rhs to fit only objective function constraints */
-  delete[] p.rhs;
-  p.rhs = new double[p.objcnt];
-
-  /* Get objective sense */
-  int cpx_sense = CPXgetobjsen(e.env, e.lp);
-  p.objsen = (cpx_sense == CPX_MIN ? MIN : MAX);
-  /* Set objective constraint sense and RHS */
-  p.consense = new char[p.objcnt];
-  for (int j = 0; j < p.objcnt; j++) {
-    if (p.objsen == MIN) {
-      p.consense[j] = 'L'; /* Set sense to <= */
-      p.rhs[j] = CPX_INFBOUND;
-    }
-    else {
-      p.consense[j] = 'G'; /* Set sense to >= */
-      p.rhs[j] = -CPX_INFBOUND;
-    }
-  }
-
-  /* Specify index of objective constraints */
-  p.conind = new int[p.objcnt];
-  for (int j = 0, k = p.objcnt; j < p.objcnt; j++, k--) {
-    p.conind[j] = cur_numrows-k;
-  }
-
-  /* Set sense of objective constraints */
-  status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
-  if (status) {
-    fprintf (stderr, "Failed to change constraint sense\n");
-    return -ERR_CPLEX;
-  }
-
-  /* Set rhs of objective constraints */
-  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
-  if (status) {
-    fprintf (stderr, "Failed to change constraint rhs\n");
-    return -ERR_CPLEX;
-  }
+  read_lp_problem(lpfn, e, p);
 
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
@@ -1104,4 +980,130 @@ bool problems_equal(const Result * a, const Result * b, int objcnt) {
     }
   }
   return true;
+}
+
+int read_lp_problem(const char* filename, Env& e, Problem& p) {
+  int status;
+  /* Create the problem, using the filename as the problem name */
+  e.lp = CPXcreateprob(e.env, &status, filename);
+
+  if (e.lp == NULL) {
+    fprintf (stderr, "Failed to create LP.\n");
+    return -ERR_CPLEX;
+  }
+
+  /* Now read the file, and copy the data into the created lp */
+  status = CPXreadcopyprob(e.env, e.lp, filename, NULL);
+  if (status) {
+    fprintf (stderr, "Failed to read and copy the problem data.\n");
+    return -ERR_CPLEX;
+  }
+
+  /* Get last rhs and determine the number of objectives.*/
+  int cur_numcols = CPXgetnumcols(e.env, e.lp);
+  int cur_numrows = CPXgetnumrows(e.env, e.lp);
+  int cur_numnz = CPXgetnumnz(e.env, e.lp);
+
+  p.rhs = new double[cur_numrows];
+
+  /* Get RHS of last objective - this tells us the objective count */
+  status = CPXgetrhs (e.env, e.lp, p.rhs, cur_numrows-1, cur_numrows-1);
+
+  if (status) {
+    fprintf (stderr, "Failed to get RHS.\n");
+    return -ERR_CPLEX;
+  }
+
+  p.objcnt = static_cast<int>(p.rhs[0]);
+
+  /* Create a pair of multidimensional arrays to store the objective
+   * coefficients and their indices indices first */
+  p.objind = new int*[p.objcnt];
+  for(int j = 0; j < p.objcnt; j++) {
+    p.objind[j] = new int[cur_numcols];
+    for(int i = 0; i < cur_numcols; i++){
+      p.objind[j][i] = i;
+    }
+  }
+  /* Now coefficients */
+  p.objcoef = new double*[p.objcnt];
+  for(int j = 0; j < p.objcnt; j++) {
+    p.objcoef[j] = new double[cur_numcols];
+    memset(p.objcoef[j], 0, cur_numcols * sizeof(double));
+  }
+
+  /* Parse out the objectives working backwards from the last constraint */
+  int * rmatbeg = new int[cur_numrows];
+  int * rmatind = new int[cur_numnz];
+  double * rmatval = new double[cur_numnz];
+  int rmatspace = cur_numnz;
+
+  int nzcnt, surplus;
+  status = CPXgetrows (e.env, e.lp, &nzcnt, rmatbeg, rmatind, rmatval,
+                      rmatspace, &surplus, cur_numrows-p.objcnt, cur_numrows-1);
+
+  if (status) {
+    fprintf (stderr, "Couldn't get rows.\n");
+    return -ERR_CPLEX;
+  }
+
+  for (int j = 0; j < p.objcnt; j++) {
+    int to;
+    int from = rmatbeg[j];
+    if (j == p.objcnt-1) {
+      to = nzcnt-1;
+    }
+    else {
+      to = rmatbeg[(j+1)] - 1;
+    }
+    for (int k = from; k <= to; k++){
+      p.objcoef[j][rmatind[k]] = rmatval[k];
+    }
+  }
+  delete[] rmatbeg;
+  delete[] rmatind;
+  delete[] rmatval;
+
+  /* Setup problem for solving */
+
+  /* Resize rhs to fit only objective function constraints */
+  delete[] p.rhs;
+  p.rhs = new double[p.objcnt];
+
+  /* Get objective sense */
+  int cpx_sense = CPXgetobjsen(e.env, e.lp);
+  p.objsen = (cpx_sense == CPX_MIN ? MIN : MAX);
+  /* Set objective constraint sense and RHS */
+  p.consense = new char[p.objcnt];
+  for (int j = 0; j < p.objcnt; j++) {
+    if (p.objsen == MIN) {
+      p.consense[j] = 'L'; /* Set sense to <= */
+      p.rhs[j] = CPX_INFBOUND;
+    }
+    else {
+      p.consense[j] = 'G'; /* Set sense to >= */
+      p.rhs[j] = -CPX_INFBOUND;
+    }
+  }
+
+  /* Specify index of objective constraints */
+  p.conind = new int[p.objcnt];
+  for (int j = 0, k = p.objcnt; j < p.objcnt; j++, k--) {
+    p.conind[j] = cur_numrows-k;
+  }
+
+  /* Set sense of objective constraints */
+  status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
+  if (status) {
+    fprintf (stderr, "Failed to change constraint sense\n");
+    return -ERR_CPLEX;
+  }
+
+  /* Set rhs of objective constraints */
+  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
+  if (status) {
+    fprintf (stderr, "Failed to change constraint rhs\n");
+    return -ERR_CPLEX;
+  }
+  return 0;
 }
