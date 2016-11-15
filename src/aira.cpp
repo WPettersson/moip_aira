@@ -395,9 +395,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   /* Set sense of objective constraints */
   status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
 
-  /* Set rhs of objective constraints */
-  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
-
   int infcnt;
   bool inflast;
   bool infeasible;
