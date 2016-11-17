@@ -15,6 +15,15 @@ class Problem {
     int* conind;
     char* consense;
 
+    /**
+     * cplex_threads is a problem parameter, because each thread needs to know
+     * the number of cplex threads to use.
+     */
+    int cplex_threads;
+
+
+    const char* filename;
+
     Problem();
     ~Problem();
 

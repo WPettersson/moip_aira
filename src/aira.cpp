@@ -87,11 +87,7 @@ int main (int argc, char *argv[])
   double cpu_time_used, elapsedtime, startelapsed;
   int solcount;
 
-
   po::variables_map v;
-
-
-  int cplex_threads;
   po::options_description opt("Options for aira");
   opt.add_options()
     ("help,h", "Show this help.")
@@ -109,7 +105,7 @@ int main (int argc, char *argv[])
       po::value<int>(&num_threads)->default_value(1),
      "Number of threads to use internally. Optional, default to 1.")
     ("cplex_threads,c",
-        po::value<int>(&cplex_threads)->default_value(1),
+        po::value<int>(&p.cplex_threads)->default_value(1),
      "Number of threads to allocate to CPLEX.\n"
      "Note that each internal thread calls CPLEX, so the total number of\n"
      "threads used is threads*cplex_threads.\n"
@@ -155,7 +151,7 @@ int main (int argc, char *argv[])
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
   /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, cplex_threads);
+  CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
   if (e.env == NULL) {
     char  errmsg[CPXMESSAGEBUFSIZE];
@@ -370,7 +366,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
   /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, 1);
+  CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
   if (e.env == NULL) {
     char  errmsg[CPXMESSAGEBUFSIZE];
