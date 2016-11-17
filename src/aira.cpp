@@ -48,13 +48,11 @@ bool split;
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
 
-/* The filename of the problem */
-const char *lpfn;
 
 /* Solve CLMOIP and return status */
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
 
-int read_lp_problem(const char* filename, Env& e, Problem& p);
+int read_lp_problem(Env& e, Problem& p, bool store_objectives);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -129,7 +127,7 @@ int main (int argc, char *argv[])
     return(1);
   }
 
-  lpfn = lpFilename.c_str();
+  p.filename = lpFilename.c_str();
 
 
   std::ofstream outFile;
@@ -168,7 +166,7 @@ int main (int argc, char *argv[])
       return -ERR_CPLEX;
   }
 
-  read_lp_problem(lpfn, e, p);
+  read_lp_problem(e, p, true /* store_objective*/);
 
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
@@ -375,21 +373,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     fprintf (stderr, "%s", errmsg);
   }
 
- status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
- if (status) {
-   fprintf (stderr,
-       "Failure to turn off screen indicator, error %d.\n", status);
- }
+  status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
+  if (status) {
+    fprintf (stderr,
+        "Failure to turn off screen indicator, error %d.\n", status);
+  }
 
-  /* Create the problem, using the filename as the problem name */
-  e.lp = CPXcreateprob(e.env, &status, lpfn);
-
-
-  /* Now read the file, and copy the data into the created lp */
-  status = CPXreadcopyprob(e.env, e.lp, lpfn, NULL);
-
-  /* Set sense of objective constraints */
-  status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
+  read_lp_problem(e, p, false/* store_objective*/);
 
   int infcnt;
   bool inflast;
@@ -975,10 +965,10 @@ bool problems_equal(const Result * a, const Result * b, int objcnt) {
   return true;
 }
 
-int read_lp_problem(const char* filename, Env& e, Problem& p) {
+int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   int status;
   /* Create the problem, using the filename as the problem name */
-  e.lp = CPXcreateprob(e.env, &status, filename);
+  e.lp = CPXcreateprob(e.env, &status, p.filename);
 
   if (e.lp == NULL) {
     fprintf (stderr, "Failed to create LP.\n");
@@ -986,10 +976,15 @@ int read_lp_problem(const char* filename, Env& e, Problem& p) {
   }
 
   /* Now read the file, and copy the data into the created lp */
-  status = CPXreadcopyprob(e.env, e.lp, filename, NULL);
+  status = CPXreadcopyprob(e.env, e.lp, p.filename, NULL);
   if (status) {
     fprintf (stderr, "Failed to read and copy the problem data.\n");
     return -ERR_CPLEX;
+  }
+
+  // If we aren't storing objectives, we are now done.
+  if (!store_objectives) {
+    return 0;
   }
 
   /* Get last rhs and determine the number of objectives.*/
@@ -1010,7 +1005,7 @@ int read_lp_problem(const char* filename, Env& e, Problem& p) {
   p.objcnt = static_cast<int>(p.rhs[0]);
 
   /* Create a pair of multidimensional arrays to store the objective
-   * coefficients and their indices indices first */
+  * coefficients and their indices indices first */
   p.objind = new int*[p.objcnt];
   for(int j = 0; j < p.objcnt; j++) {
     p.objind[j] = new int[cur_numcols];
