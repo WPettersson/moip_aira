@@ -1,11 +1,3 @@
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ilcplex/cplex.h>
-#include <libgen.h>
-#include <time.h>
-
 #include <atomic>
 #include <condition_variable>
 #include <ctime>
@@ -15,6 +7,8 @@
 #include <list>
 #include <mutex>
 #include <thread>
+
+#include <ilcplex/cplex.h>
 
 #include <boost/program_options.hpp>
 
@@ -153,17 +147,13 @@ int main (int argc, char *argv[])
   CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
   if (e.env == NULL) {
-    char  errmsg[CPXMESSAGEBUFSIZE];
-    fprintf (stderr, "Could not open CPLEX environment.\n");
-    CPXgeterrorstring (e.env, status, errmsg);
-    fprintf (stderr, "%s", errmsg);
+    std::cerr << "Could not open CPLEX environment." << std::endl;
     return -ERR_CPLEX;
   }
 
   status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
   if (status) {
-    fprintf (stderr,
-        "Failure to turn off screen indicator, error %d.\n", status);
+    std::cerr << "Failure to turn off screen indicator, error." << std::endl ;
       return -ERR_CPLEX;
   }
 
@@ -291,17 +281,14 @@ int main (int argc, char *argv[])
   if ( e.lp != NULL ) {
      status = CPXfreeprob (e.env, &e.lp);
      if ( status ) {
-        fprintf (stderr, "CPXfreeprob failed, error code %d.\n", status);
+       std::cerr << "CPXfreeprob failed." << std::endl;
      }
   }
   if ( e.env != NULL ) {
      status = CPXcloseCPLEX (&e.env);
 
      if ( status ) {
-        char  errmsg[CPXMESSAGEBUFSIZE];
-        fprintf (stderr, "Could not close CPLEX environment.\n");
-        CPXgeterrorstring (e.env, status, errmsg);
-        fprintf (stderr, "%s", errmsg);
+       std::cerr << "Could not close CPLEX environment." << std::endl;
      }
   }
 
@@ -332,18 +319,18 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
     int j = perm[j_preimage];
     status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
     if (status) {
-       fprintf (stderr, "Failed to set objective.\n");
+      std::cerr << "Failed to set objective." << std::endl;
     }
 
     status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, srhs);
     if (status) {
-      fprintf (stderr, "Failed to change constraint srhs\n");
+      std::cerr << "Failed to change constraint srhs" << std::endl;
     }
 
     /* solve for current objective*/
     status = CPXmipopt (e.env, e.lp);
     if (status) {
-       fprintf (stderr, "Failed to optimize LP.\n");
+      std::cerr << "Failed to optimize LP." << std::endl;
     }
 
     // This is shared across threads, but it's an atomic integer (so read/writes
@@ -356,8 +343,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
     }
     status = CPXgetobjval (e.env, e.lp, &objval);
     if ( status ) {
-      std::cout << std::endl << solnstat << std::endl;
-      fprintf (stderr, "Failed to obtain objective value.\n");
+      std::cerr << "Failed to obtain objective value." << std::endl;
       exit(0);
     }
 
@@ -395,16 +381,12 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
   if (e.env == NULL) {
-    char  errmsg[CPXMESSAGEBUFSIZE];
-    fprintf (stderr, "Could not open CPLEX environment.\n");
-    CPXgeterrorstring (e.env, status, errmsg);
-    fprintf (stderr, "%s", errmsg);
+    std::cerr << "Could not open CPLEX environment." << std::endl;
   }
 
   status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
   if (status) {
-    fprintf (stderr,
-        "Failure to turn off screen indicator, error %d.\n", status);
+    std::cerr << "Failure to turn off screen indicator." << std::endl;
   }
 
 
@@ -1003,14 +985,14 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   e.lp = CPXcreateprob(e.env, &status, p.filename);
 
   if (e.lp == NULL) {
-    fprintf (stderr, "Failed to create LP.\n");
+    std::cerr << "Failed to create LP." << std::endl;
     return -ERR_CPLEX;
   }
 
   /* Now read the file, and copy the data into the created lp */
   status = CPXreadcopyprob(e.env, e.lp, p.filename, NULL);
   if (status) {
-    fprintf (stderr, "Failed to read and copy the problem data.\n");
+    std::cerr << "Failed to read and copy the problem data." << std::endl;
     return -ERR_CPLEX;
   }
 
@@ -1030,7 +1012,7 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   status = CPXgetrhs (e.env, e.lp, p.rhs, cur_numrows-1, cur_numrows-1);
 
   if (status) {
-    fprintf (stderr, "Failed to get RHS.\n");
+    std::cerr << "Failed to get RHS." << std::endl;
     return -ERR_CPLEX;
   }
 
@@ -1063,7 +1045,7 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
                       rmatspace, &surplus, cur_numrows-p.objcnt, cur_numrows-1);
 
   if (status) {
-    fprintf (stderr, "Couldn't get rows.\n");
+    std::cerr << "Couldn't get rows." << std::endl;
     return -ERR_CPLEX;
   }
 
@@ -1115,14 +1097,14 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   /* Set sense of objective constraints */
   status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
   if (status) {
-    fprintf (stderr, "Failed to change constraint sense\n");
+    std::cerr << "Failed to change constraint sense" << std::endl;
     return -ERR_CPLEX;
   }
 
   /* Set rhs of objective constraints */
   status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, p.rhs);
   if (status) {
-    fprintf (stderr, "Failed to change constraint rhs\n");
+    std::cerr << "Failed to change constraint rhs" << std::endl;
     return -ERR_CPLEX;
   }
   return 0;
@@ -1269,7 +1251,7 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
   p.rhs = new double[p.objcnt];
 
   if (status) {
-    fprintf (stderr, "Failed to get RHS.\n");
+    std::cerr << "Failed to get RHS." << std::endl;
     return -ERR_CPLEX;
   }
   if (store_objectives) {
@@ -1310,7 +1292,7 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
   /* Set sense of objective constraints */
   status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
   if (status) {
-    fprintf (stderr, "Failed to change constraint sense\n");
+    std::cerr << "Failed to change constraint sense" << std::endl;
     return -ERR_CPLEX;
   }
 
