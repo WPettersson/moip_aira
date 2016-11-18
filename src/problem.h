@@ -3,6 +3,8 @@
 
 #include "sense.h"
 
+enum filetype_t { UNKNOWN, LP, MOP };
+
 class Problem {
   public:
     int objcnt; // Number of objectives
@@ -23,13 +25,15 @@ class Problem {
 
 
     const char* filename;
+    filetype_t filetype;
+
 
     Problem();
     ~Problem();
 
 };
 
-inline Problem::Problem() : objcnt(0) { }
+inline Problem::Problem() : objcnt(0), filetype(UNKNOWN) { }
 
 inline Problem::~Problem() {
   // If objcnt == 0, then no problem has been assigned and no memory allocated

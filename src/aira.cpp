@@ -53,6 +53,7 @@ std::atomic<int> ipcount;
 int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
 
 int read_lp_problem(Env& e, Problem& p, bool store_objectives);
+int read_mop_problem(Env& e, Problem& p, bool store_objectives);
 
 /* Optimise!
  * first_result is the result of the optimisation with no constraints on
@@ -166,8 +167,33 @@ int main (int argc, char *argv[])
       return -ERR_CPLEX;
   }
 
-  read_lp_problem(e, p, true /* store_objective*/);
+  {
+    int len = strlen(p.filename);
+    if ((len > 3) && ('.' == p.filename[len-3]) &&
+        ('l' == p.filename[len-2] && 'p' == p.filename[len-1])) {
+      p.filetype = LP;
+    } else if ((len > 4) && ('.' == p.filename[len-4]) &&
+        ('m' == p.filename[len-3] && 'o' == p.filename[len-2] &&
+        'p' == p.filename[len-1])) {
+      p.filetype = MOP;
+    }
+  }
 
+  {
+    int file_status;
+    if (p.filetype == LP) {
+      file_status = read_lp_problem(e, p, true /* store_objective*/);
+    } else if (p.filetype == MOP) {
+      file_status = read_mop_problem(e, p, true /* store_objective*/);
+    } else {
+      std::cerr << "Unknown filetype" << std::endl;
+      return -1;
+    }
+    if (file_status != 0) {
+      std::cerr << "Error reading file" << std::endl;
+      return -1;
+    }
+  }
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
   /* Start the timer */
@@ -325,12 +351,14 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
     ipcount++;
 
     solnstat = CPXgetstat (e.env, e.lp);
-    if (solnstat == CPXMIP_INFEASIBLE) {
+    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
        break;
     }
     status = CPXgetobjval (e.env, e.lp, &objval);
     if ( status ) {
-       fprintf (stderr, "Failed to obtain objective value.\n");
+      std::cout << std::endl << solnstat << std::endl;
+      fprintf (stderr, "Failed to obtain objective value.\n");
+      exit(0);
     }
 
     //p.result[j] = srhs[j] = round(objval);
@@ -379,7 +407,12 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         "Failure to turn off screen indicator, error %d.\n", status);
   }
 
-  read_lp_problem(e, p, false/* store_objective*/);
+
+  if (p.filetype == LP) {
+    read_lp_problem(e, p, true /* store_objective*/);
+  } else if (p.filetype == MOP) {
+    read_mop_problem(e, p, true /* store_objective*/);
+  }
 
   int infcnt;
   bool inflast;
@@ -497,7 +530,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         clock_gettime(CLOCK_MONOTONIC, &start);
         cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
-        infeasible = (solnstat == CPXMIP_INFEASIBLE);
+        infeasible = ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD));
         /* Store result */
         s.insert(rhs, result, infeasible);
       }
@@ -1093,5 +1126,197 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
     fprintf (stderr, "Failed to change constraint rhs\n");
     return -ERR_CPLEX;
   }
+  return 0;
+}
+
+
+int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
+  int status;
+  /* Create the problem, using the filename as the problem name */
+  e.lp = CPXcreateprob(e.env, &status, p.filename);
+
+  if (e.lp == NULL) {
+    std::cerr << "Failed to create problem." << std::endl;
+    return -ERR_CPLEX;
+  }
+
+  /* Now read the file, and copy the data into the created lp */
+  status = CPXreadcopyprob(e.env, e.lp, p.filename, NULL);
+  if (status) {
+    std::cerr << "Failed to read and copy the problem data." << std::endl;
+    return -ERR_CPLEX;
+  }
+
+
+  size_t cur_numcols = CPXgetnumcols(e.env, e.lp);
+  size_t cur_numrows = CPXgetnumrows(e.env, e.lp);
+
+
+  char** colNames = new char*[cur_numcols];
+  size_t sz = cur_numcols * 1024;
+  char* store = new char[sz];
+  int surplus;
+  status = CPXgetcolname(e.env, e.lp, colNames, store, sz, &surplus, 0, cur_numcols-1);
+  if (status) {
+    std::cerr << "Error retrieving column names." << std::endl;
+    return -ERR_CPLEX;
+  }
+
+
+  // Iterate through file until we get to ROWS
+  // count number of objectives
+  // store names
+  // break when we get COLUMNS
+  // read a b c
+  // if b == objective_name[i] p.objcoeff[i][ name_to_index[a]] = int(c)
+  std::fstream mop_file(p.filename, std::ios::in);
+  std::string line;
+  // Find "ROWS" line
+  while (std::getline( mop_file, line)) {
+    if ("ROWS" == line) {
+      break;
+    }
+  }
+  // Read objective names
+  std::vector<std::string> objNames;
+  while (std::getline( mop_file, line)) {
+    // Objective functions have N as the second character
+    if ('N' != line[1]) {
+      break;
+    }
+    std::stringstream ss(line);
+    std::string n, name;
+    ss >> n; // Skip "N"
+    ss >> name;
+    objNames.push_back(name);
+  }
+  if (store_objectives) {
+    p.objcnt = static_cast<int>(objNames.size());
+  }
+  int new_nzcnt = p.objcnt * cur_numcols;
+  double * newRowMatVal = new double[new_nzcnt] {0};
+  int * newRowMatInd = new int[new_nzcnt];
+
+  // We will store each coefficient, in order, so set matrix up
+  for(int i = 0; i < p.objcnt; ++i) {
+    for(size_t j = 0; j < cur_numcols; ++j) {
+      newRowMatInd[i*cur_numcols + j] = j;
+    }
+  }
+  int * newRowMatBeg = new int[objNames.size()];
+  for(int i = 0; i < p.objcnt; ++i) {
+    newRowMatBeg[i] = i*cur_numcols;
+  }
+
+  if (store_objectives) {
+    /* Create a pair of multidimensional arrays to store the objective
+    * coefficients and their indices indices first */
+    p.objind = new int*[p.objcnt];
+    for(int j = 0; j < p.objcnt; j++) {
+      p.objind[j] = new int[cur_numcols];
+      for(size_t i = 0; i < cur_numcols; i++){
+        p.objind[j][i] = i;
+      }
+    }
+    /* Now coefficients */
+    p.objcoef = new double*[p.objcnt];
+    for(int j = 0; j < p.objcnt; j++) {
+      p.objcoef[j] = new double[cur_numcols];
+      memset(p.objcoef[j], 0, cur_numcols * sizeof(double));
+    }
+  }
+  // Find columns
+  while (std::getline( mop_file, line)) {
+    if ("COLUMNS" == line) {
+      break;
+    }
+  }
+
+  /* Parse out the objectives working backwards from the last constraint */
+  while (std::getline( mop_file, line)) {
+    std::stringstream ss(line);
+    std::string col, obj;
+    signed int val;
+    ss >> col;
+    ss >> obj;
+    ss >> val;
+    size_t colInd;
+    int objInd;
+    for(colInd = 0; colInd < cur_numcols; ++colInd) {
+      if ( col.compare(colNames[colInd]) == 0) {
+        break;
+      }
+    }
+    // Skip if we don't recognise because why not?
+    if (colInd == cur_numcols)
+      continue;
+
+    for(objInd = 0; objInd < p.objcnt; ++objInd) {
+      if (objNames[objInd] == obj) {
+        break;
+      }
+    }
+    if (objInd == p.objcnt) {
+      // Just an inequality, which we've already read.
+      continue;
+    }
+    if (store_objectives) {
+      p.objcoef[objInd][colInd] = val;
+    }
+    newRowMatVal[objInd * cur_numcols + colInd] = val;
+  }
+
+  // Now we need to set up the RHS.
+  p.rhs = new double[p.objcnt];
+
+  if (status) {
+    fprintf (stderr, "Failed to get RHS.\n");
+    return -ERR_CPLEX;
+  }
+  if (store_objectives) {
+    /* Get objective sense */
+    int cpx_sense = CPXgetobjsen(e.env, e.lp);
+    p.objsen = (cpx_sense == CPX_MIN ? MIN : MAX);
+    /* Set objective constraint sense and RHS */
+    p.consense = new char[p.objcnt];
+    for (int j = 0; j < p.objcnt; j++) {
+      if (p.objsen == MIN) {
+        p.consense[j] = 'L'; /* Set sense to <= */
+        p.rhs[j] = CPX_INFBOUND;
+      }
+      else {
+        p.consense[j] = 'G'; /* Set sense to >= */
+        p.rhs[j] = -CPX_INFBOUND;
+      }
+    }
+  }
+
+  delete[] colNames;
+  colNames = new char*[objNames.size()];
+  for(size_t i = 0; i < objNames.size(); ++i) {
+    colNames[i] = new char[objNames[i].size()+1];
+    for(size_t j = 0; j < objNames[i].size(); j++) {
+      colNames[i][j] = objNames[i][j];
+    }
+    colNames[i][objNames.size()] = '\0';
+  }
+  CPXaddrows(e.env, e.lp, 0 /*ccnt*/, objNames.size(), new_nzcnt, p.rhs, p.consense, newRowMatBeg, newRowMatInd, newRowMatVal, colNames, NULL /*rowname*/);
+
+  p.conind = new int[p.objcnt];
+  /* Specify index of objective constraints */
+  for (int j = 0; j < p.objcnt; j++) {
+    p.conind[j] = cur_numrows+j;
+  }
+
+  /* Set sense of objective constraints */
+  status = CPXchgsense (e.env, e.lp, p.objcnt, p.conind, p.consense);
+  if (status) {
+    fprintf (stderr, "Failed to change constraint sense\n");
+    return -ERR_CPLEX;
+  }
+
+  delete[] newRowMatVal;
+  delete[] newRowMatInd;
+  delete[] newRowMatBeg;
   return 0;
 }
