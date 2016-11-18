@@ -421,11 +421,12 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   double * rhs;
 
   result = resultStore = new int[p.objcnt];
+  rhs = new double[p.objcnt];
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-  int solnstat = solve(e, p, result, p.rhs, thread_id);
+  int solnstat = solve(e, p, result, rhs, thread_id);
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
@@ -446,7 +447,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   }
 
   /* Need to add a result to the list here*/
-  s.insert(p.rhs, result, solnstat == CPXMIP_INFEASIBLE);
+  s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
   if (solnstat != CPXMIP_INFEASIBLE) {
     int *objectives = new int[p.objcnt];
     for (int i = 0; i < p.objcnt; ++i) {
@@ -461,7 +462,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
         }
         std::cout << std::endl;
 #endif
-  rhs = new double[p.objcnt];
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
@@ -471,7 +471,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     partner_limit = result[perm[1]];
   }
   for (int j = 0; j < p.objcnt; j++) {
-    rhs[j] = p.rhs[j];
     min[j] = max[j] = result[j];
   }
   for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
