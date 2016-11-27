@@ -404,6 +404,9 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 
   result = resultStore = new int[p.objcnt];
   rhs = new double[p.objcnt];
+  for(int i = 0; i < p.objcnt; ++i) {
+    rhs[i] = p.rhs[i];
+  }
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   double starttime = (start.tv_sec + start.tv_nsec/1e9);
