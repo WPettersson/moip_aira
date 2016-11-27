@@ -426,16 +426,18 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 
   // Share the midpoint if splitting
   if (split && num_threads > 1) {
-    std::unique_lock<std::mutex> lk(status_mutex);
-    if (midpoint == 0) {
-      // First in, wait.
-      midpoint += ((double)result[0])/2;
-      cv.wait(lk);
-    } else {
-      // Second in, update and keep going
-      midpoint += ((double)result[0])/2;
-      cv.notify_all();
+    {
+      std::unique_lock<std::mutex> lk(status_mutex);
+      if (midpoint == 0) {
+        // First in, wait.
+        midpoint += ((double)result[0])/2;
+        cv.wait(lk);
+      } else {
+        // Second in, update and keep going
+        midpoint += ((double)result[0])/2;
+      }
     }
+    cv.notify_all();
   }
 
   /* Need to add a result to the list here*/
