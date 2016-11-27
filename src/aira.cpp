@@ -413,6 +413,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   clock_gettime(CLOCK_MONOTONIC, &start);
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
+#ifdef DEBUG
+  std::cout << "Thread " << thread_id << " with constraints ∞* found ";
+  for(int i = 0; i < p.objcnt; ++i) {
+    std::cout << result[i] << ",";
+  }
+  std::cout << std::endl;
+#endif
 
   // Share the midpoint if splitting
   if (split && num_threads > 1) {
@@ -437,13 +444,6 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     }
     partner_feasibles->push_back(objectives);
   }
-#ifdef DEBUG
-    std::cout << "Thread " << thread_id << " with constraints ∞* found ";
-        for(int i = 0; i < p.objcnt; ++i) {
-          std::cout << result[i] << ",";
-        }
-        std::cout << std::endl;
-#endif
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
