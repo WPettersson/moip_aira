@@ -100,5 +100,6 @@ Solutions::~Solutions() {
     delete[] r->ip;
     if (r->result)
       delete[] r->result;
+    delete r;
   }
 }

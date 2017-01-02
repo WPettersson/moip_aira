@@ -27,7 +27,7 @@ test: executable
 $(TARGETDIR)/aira: $(TARGETDIR) $(OBJS)
 	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
-$(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h
+$(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h $(SRC)/problem.h
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/aira.cpp
 
 $(TARGETDIR)/symgroup.o: $(SRC)/symgroup.h $(SRC)/symgroup.cpp $(SRC)/symgroup_extern.h
