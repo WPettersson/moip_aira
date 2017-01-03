@@ -1,7 +1,7 @@
 SRC = ./src
 TARGETDIR = ./build
 #TARGETDIR = ./debug
-CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio1263
+CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio127
 CC = gcc
 CXX = g++
 CFLAGS = -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include/
