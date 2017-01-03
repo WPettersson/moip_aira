@@ -468,7 +468,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
     infcnt = 0; /* Infeasible count*/
     inflast = false; /* Last iteration infeasible?*/
 
-    /* Set all contraints back to infinity*/
+    /* Set all constraints back to infinity*/
     for (int j = 0; j < p.objcnt; j++) {
       if (p.objsen == MIN) {
         if (split && (thread_id == 0) && (j == 0))
@@ -1036,7 +1036,8 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   p.objcoef = new double*[p.objcnt];
   for(int j = 0; j < p.objcnt; j++) {
     p.objcoef[j] = new double[cur_numcols];
-    memset(p.objcoef[j], 0, cur_numcols * sizeof(double));
+    for (int i = 0; i < cur_numcols; ++i)
+      p.objcoef[j][i] = 0;
   }
 
   /* Parse out the objectives working backwards from the last constraint */
@@ -1063,7 +1064,7 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
     else {
       to = rmatbeg[(j+1)] - 1;
     }
-    for (int k = from; k <= to; k++){
+    for (int k = from; k <= to; k++) {
       p.objcoef[j][rmatind[k]] = rmatval[k];
     }
   }
@@ -1208,7 +1209,9 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
     p.objcoef = new double*[p.objcnt];
     for(int j = 0; j < p.objcnt; j++) {
       p.objcoef[j] = new double[cur_numcols];
-      memset(p.objcoef[j], 0, cur_numcols * sizeof(double));
+      for (size_t i = 0; i < cur_numcols; ++i) {
+        p.objcoef[j][i] = 0;
+      }
     }
   }
   // Find columns
