@@ -57,9 +57,9 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives);
  * objective.
  **/
 void optimise(int thread_id, Problem & p, Solutions &all,
-    std::mutex & solutionMutex, std::atomic<double>& my_limit,
-    std::atomic<double>& partner_limit, std::atomic<double> *rest_limits,
-    std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles);
+    std::mutex & solutionMutex, std::atomic<double> *shared_limits,
+    std::atomic<double> *global_limits, std::list<int*> * my_feasibles,
+    std::list<int*> * partner_feasibles);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -196,38 +196,32 @@ int main (int argc, char *argv[])
   if (num_threads > S[p.objcnt].size())
     num_threads = S[p.objcnt].size();
 
-  if (num_threads > 2)
-    num_threads = 2;
-
   std::list<std::thread> threads;
   Solutions all(p.objcnt);
   std::mutex solutionMutex;
 
-  // Each pair of threads shares two of these limits.
-  // If we have an odd number of threads (including 1) then we don't want to
-  // access invalid memory, and one extra double is unlikely to break any
-  // memory constraints.
-  std::atomic<double> *limits = new std::atomic<double>[p.objcnt];
+  std::atomic<double> *global_limits = new std::atomic<double>[p.objcnt];
 
-  if (p.objsen == MIN) {
-    limits[0] = CPX_INFBOUND;
-    limits[1] = CPX_INFBOUND;
-  } else {
-    limits[0] = -CPX_INFBOUND;
-    limits[1] = -CPX_INFBOUND;
-  }
-  std::list<int *> *t1_solns = new std::list<int *>;
-  std::list<int *> *t2_solns = new std::list<int *>;
-  threads.emplace_back(optimise,
-      0, std::ref(p), std::ref(all), std::ref(solutionMutex),
-      std::ref(limits[0]), std::ref(limits[1]), limits,
-      t1_solns, t2_solns);
-  // Odd number of threads
-  if (num_threads == 2) {
+  for (int t = 0; t < num_threads; t += 2) {
+    std::atomic<double> *shared_limits = new std::atomic<double>[p.objcnt];
+    for (int i = 0; i < p.objcnt; ++i) {
+      if (p.objsen == MIN) {
+        shared_limits[i] = CPX_INFBOUND;
+      } else {
+        shared_limits[i] = -CPX_INFBOUND;
+      }
+    }
+    std::list<int *> *t1_solns = new std::list<int *>;
+    std::list<int *> *t2_solns = new std::list<int *>;
     threads.emplace_back(optimise,
-        1, std::ref(p), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[1]), std::ref(limits[0]), limits,
-        t2_solns, t1_solns);
+        t, std::ref(p), std::ref(all), std::ref(solutionMutex),
+        shared_limits, global_limits, t1_solns, t2_solns);
+    // Only launch second thread in pair if we have an even number of threads
+    if ((num_threads % 2) == 0) {
+      threads.emplace_back(optimise,
+          t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
+          shared_limits, global_limits, t2_solns, t1_solns);
+    }
   }
   for (auto& thread: threads)
     thread.join();
@@ -358,9 +352,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 
 
 void optimise(int thread_id, Problem & p, Solutions & all,
-    std::mutex &solutionMutex, std::atomic<double> & my_limit,
-    std::atomic<double> & partner_limit, std::atomic<double> *rest_limits,
-    std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles) {
+    std::mutex &solutionMutex, std::atomic<double> *shared_limits,
+    std::atomic<double> *global_limits, std::list<int *> * my_feasibles,
+    std::list<int *> * partner_feasibles) {
   Env e;
   Solutions s(p.objcnt);
   int status;
@@ -453,6 +447,9 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   max = new int[p.objcnt];
 
   const int* perm = S[p.objcnt][thread_id];
+
+  std::atomic<double> &my_limit = shared_limits[perm[0]];
+  std::atomic<double> &partner_limit = shared_limits[perm[1]];
 
   if ((solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
     partner_limit = result[perm[1]];
@@ -650,9 +647,9 @@ void optimise(int thread_id, Problem & p, Solutions & all,
             thread_status = DONE; // This thread was first in.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                rest_limits[i] = max[i];
+                shared_limits[i] = max[i];
               } else {
-                rest_limits[i] = min[i];
+                shared_limits[i] = min[i];
               }
             }
             wait = true;
@@ -667,12 +664,12 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 #endif
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (rest_limits[i] > max[i]) {
-                  max[i] = rest_limits[i];
+                if (shared_limits[i] > max[i]) {
+                  max[i] = shared_limits[i];
                 }
               } else {
-                if (rest_limits[i] < min[i]) {
-                  min[i] = rest_limits[i];
+                if (shared_limits[i] < min[i]) {
+                  min[i] = shared_limits[i];
                 }
               }
             }
@@ -757,16 +754,16 @@ void optimise(int thread_id, Problem & p, Solutions & all,
             // This thread can't be first in, so must be last.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (rest_limits[i] < max[i]) {
-                  rest_limits[i] = max[i];
+                if (shared_limits[i] < max[i]) {
+                  shared_limits[i] = max[i];
                 } else {
-                  max[i] = rest_limits[i];
+                  max[i] = shared_limits[i];
                 }
               } else {
-                if (rest_limits[i] > min[i]) {
-                  rest_limits[i] = min[i];
+                if (shared_limits[i] > min[i]) {
+                  shared_limits[i] = min[i];
                 } else {
-                  min[i] = rest_limits[i];
+                  min[i] = shared_limits[i];
                 }
               }
             }
