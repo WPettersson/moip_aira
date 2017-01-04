@@ -24,16 +24,19 @@ class Problem {
     int cplex_threads;
 
 
-    const char* filename;
+    const char* filename_;
     filetype_t filetype;
 
+    const char* filename();
 
-    Problem();
+    Problem(const char* filename, int cplex_threads);
     ~Problem();
 
 };
 
-inline Problem::Problem() : objcnt(0), filetype(UNKNOWN) { }
+inline const char * Problem::filename() {
+  return filename_;
+}
 
 inline Problem::~Problem() {
   // If objcnt == 0, then no problem has been assigned and no memory allocated

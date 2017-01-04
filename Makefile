@@ -13,7 +13,7 @@ all: executable
 
 executable: $(TARGETDIR)/aira
 
-OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o
+OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o $(TARGETDIR)/problem.o
 
 $(TARGETDIR):
 	mkdir -p $(TARGETDIR)
@@ -38,6 +38,9 @@ $(TARGETDIR)/solutions.o: $(SRC)/solutions.h $(SRC)/solutions.cpp $(SRC)/sense.h
 
 $(TARGETDIR)/result.o: $(SRC)/result.h $(SRC)/result.cpp
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/result.cpp
+
+$(TARGETDIR)/problem.o: $(SRC)/problem.h $(SRC)/problem.cpp
+	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/problem.cpp
 
 $(SRC)/symgroup_extern.h: $(SRC)/mk_symgroup.py
 	$(SRC)/mk_symgroup.py

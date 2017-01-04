@@ -36,6 +36,7 @@ std::condition_variable cv;
 std::condition_variable ready_cv;
 
 int num_threads;
+int cplex_threads;
 
 double midpoint = 0;
 bool split;
@@ -56,7 +57,7 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives);
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
-void optimise(int thread_id, Problem & p, Solutions &all,
+void optimise(int thread_id, const char * fname, Solutions &all,
     std::mutex & solutionMutex, std::atomic<double> *shared_limits,
     std::atomic<double> *global_limits, std::list<int*> * my_feasibles,
     std::list<int*> * partner_feasibles);
@@ -70,10 +71,9 @@ int main (int argc, char *argv[])
 
   int status = 0; /* Operation status */
 
-  Problem p;
   Env e;
 
-  std::string lpFilename, outputFilename;
+  std::string pFilename, outputFilename;
 
   /* Timing */
   clock_t starttime, endtime;
@@ -85,7 +85,7 @@ int main (int argc, char *argv[])
   opt.add_options()
     ("help,h", "Show this help.")
     ("lp,p",
-      po::value<std::string>(&lpFilename),
+      po::value<std::string>(&pFilename),
      "The LP file to solve. Required.")
     ("output,o",
       po::value<std::string>(&outputFilename),
@@ -98,7 +98,7 @@ int main (int argc, char *argv[])
       po::value<int>(&num_threads)->default_value(1),
      "Number of threads to use internally. Optional, default to 1.")
     ("cplex_threads,c",
-        po::value<int>(&p.cplex_threads)->default_value(1),
+        po::value<int>(&cplex_threads)->default_value(1),
      "Number of threads to allocate to CPLEX.\n"
      "Note that each internal thread calls CPLEX, so the total number of\n"
      "threads used is threads*cplex_threads.\n"
@@ -122,7 +122,7 @@ int main (int argc, char *argv[])
     return(1);
   }
 
-  p.filename = lpFilename.c_str();
+  Problem p(pFilename.c_str(), cplex_threads);
 
 
   std::ofstream outFile;
@@ -131,8 +131,8 @@ int main (int argc, char *argv[])
     outFile.open(outputFilename);
   } else {
     /* Output file: <filename>.out */
-    size_t last = lpFilename.find_last_of(".");
-    outFile.open(lpFilename.substr(0, last).append(".out"));
+    size_t last = pFilename.find_last_of(".");
+    outFile.open(pFilename.substr(0, last).append(".out"));
   }
 
 
@@ -157,17 +157,6 @@ int main (int argc, char *argv[])
       return -ERR_CPLEX;
   }
 
-  {
-    int len = strlen(p.filename);
-    if ((len > 3) && ('.' == p.filename[len-3]) &&
-        ('l' == p.filename[len-2] && 'p' == p.filename[len-1])) {
-      p.filetype = LP;
-    } else if ((len > 4) && ('.' == p.filename[len-4]) &&
-        ('m' == p.filename[len-3] && 'o' == p.filename[len-2] &&
-        'p' == p.filename[len-1])) {
-      p.filetype = MOP;
-    }
-  }
 
   {
     int file_status;
@@ -184,6 +173,21 @@ int main (int argc, char *argv[])
       return -1;
     }
   }
+  /* Free up memory as all we needed was a count of the number of objectives. */
+  if ( e.lp != NULL ) {
+     status = CPXfreeprob (e.env, &e.lp);
+     if ( status ) {
+       std::cerr << "CPXfreeprob failed." << std::endl;
+     }
+  }
+  if ( e.env != NULL ) {
+     status = CPXcloseCPLEX (&e.env);
+
+     if ( status ) {
+       std::cerr << "Could not close CPLEX environment." << std::endl;
+     }
+  }
+
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
   /* Start the timer */
@@ -214,12 +218,12 @@ int main (int argc, char *argv[])
     std::list<int *> *t1_solns = new std::list<int *>;
     std::list<int *> *t2_solns = new std::list<int *>;
     threads.emplace_back(optimise,
-        t, std::ref(p), std::ref(all), std::ref(solutionMutex),
+        t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
         shared_limits, global_limits, t1_solns, t2_solns);
     // Only launch second thread in pair if we have an even number of threads
     if ((num_threads % 2) == 0) {
       threads.emplace_back(optimise,
-          t+1, std::ref(p), std::ref(all), std::ref(solutionMutex),
+          t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
           shared_limits, global_limits, t2_solns, t1_solns);
     }
   }
@@ -270,21 +274,6 @@ int main (int argc, char *argv[])
   outFile << ipcount << " IPs solved" << std::endl;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << solcount << " Solutions found" << std::endl;
-
-  /* Free up memory as necessary. */
-  if ( e.lp != NULL ) {
-     status = CPXfreeprob (e.env, &e.lp);
-     if ( status ) {
-       std::cerr << "CPXfreeprob failed." << std::endl;
-     }
-  }
-  if ( e.env != NULL ) {
-     status = CPXcloseCPLEX (&e.env);
-
-     if ( status ) {
-       std::cerr << "Could not close CPLEX environment." << std::endl;
-     }
-  }
 
 
   outFile.close();
@@ -351,12 +340,12 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 }
 
 
-void optimise(int thread_id, Problem & p, Solutions & all,
+void optimise(int thread_id, const char * pFilename, Solutions & all,
     std::mutex &solutionMutex, std::atomic<double> *shared_limits,
     std::atomic<double> *global_limits, std::list<int *> * my_feasibles,
     std::list<int *> * partner_feasibles) {
   Env e;
-  Solutions s(p.objcnt);
+  Problem p(pFilename, cplex_threads);
   int status;
 #ifdef FINETIMING
   double cplex_time = 0;
@@ -367,6 +356,9 @@ void optimise(int thread_id, Problem & p, Solutions & all,
 #endif
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
+  if (status != 0) {
+    std::cerr << "Could not open CPLEX environment." << std::endl;
+  }
 
   /* Set to deterministic parallel mode */
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
@@ -389,6 +381,7 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   } else if (p.filetype == MOP) {
     read_mop_problem(e, p, true /* store_objective*/);
   }
+  Solutions s(p.objcnt);
 
   int infcnt;
   bool inflast;
@@ -411,11 +404,13 @@ void optimise(int thread_id, Problem & p, Solutions & all,
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
 #ifdef DEBUG
+  debug_mutex.lock();
   std::cout << "Thread " << thread_id << " with constraints ∞* found ";
   for(int i = 0; i < p.objcnt; ++i) {
     std::cout << result[i] << ",";
   }
   std::cout << std::endl;
+  debug_mutex.unlock();
 #endif
 
   // Share the midpoint if splitting
@@ -984,7 +979,7 @@ bool problems_equal(const Result * a, const Result * b, int objcnt) {
 int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   int status;
   /* Create the problem, using the filename as the problem name */
-  e.lp = CPXcreateprob(e.env, &status, p.filename);
+  e.lp = CPXcreateprob(e.env, &status, p.filename());
 
   if (e.lp == NULL) {
     std::cerr << "Failed to create LP." << std::endl;
@@ -992,7 +987,7 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
   }
 
   /* Now read the file, and copy the data into the created lp */
-  status = CPXreadcopyprob(e.env, e.lp, p.filename, NULL);
+  status = CPXreadcopyprob(e.env, e.lp, p.filename(), NULL);
   if (status) {
     std::cerr << "Failed to read and copy the problem data." << std::endl;
     return -ERR_CPLEX;
@@ -1117,7 +1112,7 @@ int read_lp_problem(Env& e, Problem& p, bool store_objectives) {
 int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
   int status;
   /* Create the problem, using the filename as the problem name */
-  e.lp = CPXcreateprob(e.env, &status, p.filename);
+  e.lp = CPXcreateprob(e.env, &status, p.filename());
 
   if (e.lp == NULL) {
     std::cerr << "Failed to create problem." << std::endl;
@@ -1125,7 +1120,7 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
   }
 
   /* Now read the file, and copy the data into the created lp */
-  status = CPXreadcopyprob(e.env, e.lp, p.filename, NULL);
+  status = CPXreadcopyprob(e.env, e.lp, p.filename(), NULL);
   if (status) {
     std::cerr << "Failed to read and copy the problem data." << std::endl;
     return -ERR_CPLEX;
@@ -1153,7 +1148,7 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives) {
   // break when we get COLUMNS
   // read a b c
   // if b == objective_name[i] p.objcoeff[i][ name_to_index[a]] = int(c)
-  std::fstream mop_file(p.filename, std::ios::in);
+  std::fstream mop_file(p.filename(), std::ios::in);
   std::string line;
   // Find "ROWS" line
   while (std::getline( mop_file, line)) {
