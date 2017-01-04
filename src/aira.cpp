@@ -173,6 +173,21 @@ int main (int argc, char *argv[])
       return -1;
     }
   }
+  /* Free up memory as all we needed was a count of the number of objectives. */
+  if ( e.lp != NULL ) {
+     status = CPXfreeprob (e.env, &e.lp);
+     if ( status ) {
+       std::cerr << "CPXfreeprob failed." << std::endl;
+     }
+  }
+  if ( e.env != NULL ) {
+     status = CPXcloseCPLEX (&e.env);
+
+     if ( status ) {
+       std::cerr << "Could not close CPLEX environment." << std::endl;
+     }
+  }
+
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
   /* Start the timer */
@@ -265,21 +280,6 @@ int main (int argc, char *argv[])
   outFile << ipcount << " IPs solved" << std::endl;
   outFile << std::setw(width) << std::setprecision(precision) << std::fixed;
   outFile << solcount << " Solutions found" << std::endl;
-
-  /* Free up memory as necessary. */
-  if ( e.lp != NULL ) {
-     status = CPXfreeprob (e.env, &e.lp);
-     if ( status ) {
-       std::cerr << "CPXfreeprob failed." << std::endl;
-     }
-  }
-  if ( e.env != NULL ) {
-     status = CPXcloseCPLEX (&e.env);
-
-     if ( status ) {
-       std::cerr << "Could not close CPLEX environment." << std::endl;
-     }
-  }
 
 
   outFile.close();
