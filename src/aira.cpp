@@ -362,6 +362,9 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 #endif
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
+  if (status != 0) {
+    std::cerr << "Could not open CPLEX environment." << std::endl;
+  }
 
   /* Set to deterministic parallel mode */
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
@@ -407,11 +410,13 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
 #ifdef DEBUG
+  debug_mutex.lock();
   std::cout << "Thread " << thread_id << " with constraints ∞* found ";
   for(int i = 0; i < p.objcnt; ++i) {
     std::cout << result[i] << ",";
   }
   std::cout << std::endl;
+  debug_mutex.unlock();
 #endif
 
   // Share the midpoint if splitting
