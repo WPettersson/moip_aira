@@ -865,7 +865,21 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
 
+      if ((infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
+        if (p.objsen == MIN) {
+          global_limits[perm[p.objcnt-1]] = max[perm[p.objcnt-1]]-1;
+        } else {
+          global_limits[perm[p.objcnt-1]] = min[perm[p.objcnt-1]]+1;
+        }
+      }
       if (infcnt == objective_counter-1) {
+        if ((objective_counter == p.objcnt - 1) || (false) ) {
+          if (p.objsen == MIN) {
+            global_limits[perm[p.objcnt-1]] = max[perm[p.objcnt-1]]-1;
+          } else {
+            global_limits[perm[p.objcnt-1]] = min[perm[p.objcnt-1]]+1;
+          }
+        }
         /* Set all contraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
           rhs[j] = global_limits[j];
