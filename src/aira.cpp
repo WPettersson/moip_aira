@@ -206,14 +206,15 @@ int main (int argc, char *argv[])
 
   std::atomic<double> *global_limits = new std::atomic<double>[p.objcnt];
 
+  double lim = (p.objsen == MIN) ? CPX_INFBOUND : -CPX_INFBOUND;
+  for (int i = 0; i < p.objcnt; ++i) {
+    global_limits[i] = lim;
+  }
+
   for (int t = 0; t < num_threads; t += 2) {
     std::atomic<double> *shared_limits = new std::atomic<double>[p.objcnt];
     for (int i = 0; i < p.objcnt; ++i) {
-      if (p.objsen == MIN) {
-        shared_limits[i] = CPX_INFBOUND;
-      } else {
-        shared_limits[i] = -CPX_INFBOUND;
-      }
+      shared_limits[i] = lim;
     }
     std::list<int *> *t1_solns = new std::list<int *>;
     std::list<int *> *t2_solns = new std::list<int *>;
@@ -462,18 +463,10 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 
     /* Set all constraints back to infinity*/
     for (int j = 0; j < p.objcnt; j++) {
-      if (p.objsen == MIN) {
-        if (split && (thread_id == 0) && (j == 0))
-          rhs[j] = midpoint;
-        else
-          rhs[j] = CPX_INFBOUND;
-      }
-      else {
-        if (split && (thread_id == 0) && (j == 0))
-          rhs[j] = midpoint;
-        else
-          rhs[j] = -CPX_INFBOUND;
-      }
+      if (split && (thread_id == 0) && (j == 0))
+        rhs[j] = midpoint;
+      else
+        rhs[j] = global_limits[j];
     }
     /* Set rhs of current depth */
     if (p.objsen == MIN) {
@@ -678,11 +671,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               for( int i = 2; i < p.objcnt; ++i) {
                 lp[perm[i]] = rhs[perm[i]];
               }
-              if (p.objsen == MIN) {
-                lp[perm[0]] = CPX_INFBOUND;
-              } else {
-                lp[perm[0]] = -CPX_INFBOUND;
-              }
+              lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
               if (p.objsen == MIN) {
@@ -772,11 +761,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               for( int i = 2; i < p.objcnt; ++i) {
                 lp[perm[i]] = rhs[perm[i]];
               }
-              if (p.objsen == MIN) {
-                lp[perm[0]] = CPX_INFBOUND;
-              } else {
-                lp[perm[0]] = -CPX_INFBOUND;
-              }
+              lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
               if (p.objsen == MIN) {
@@ -846,13 +831,10 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             * easiest way of achieving this. Note that we reset limits before
             * notifying the other thread, so the other thread will not start the
             * next run until limits are reset too. */
-            if (p.objsen == MIN) {
-              my_limit = CPX_INFBOUND;
-              partner_limit = CPX_INFBOUND;
-            } else {
-              my_limit = -CPX_INFBOUND;
-              partner_limit = -CPX_INFBOUND;
-            }
+
+            // Note the typecasting to avoid the deleted copy constructor.
+            my_limit = (double)global_limits[perm[0]];
+            partner_limit = (double)global_limits[perm[1]];
             thread_status = RUNNING;
           }
         }
@@ -886,11 +868,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       if (infcnt == objective_counter-1) {
         /* Set all contraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-          if (p.objsen == MIN) {
-            rhs[j] = CPX_INFBOUND;
-          } else {
-            rhs[j] = -CPX_INFBOUND;
-          }
+          rhs[j] = global_limits[j];
         }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
