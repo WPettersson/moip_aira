@@ -635,9 +635,9 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             thread_status = DONE; // This thread was first in.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                shared_limits[i] = max[i];
+                shared_limits[perm[i]] = max[perm[i]];
               } else {
-                shared_limits[i] = min[i];
+                shared_limits[perm[i]] = min[perm[i]];
               }
             }
             wait = true;
@@ -652,12 +652,12 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 #endif
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (shared_limits[i] > max[i]) {
-                  max[i] = shared_limits[i];
+                if (shared_limits[perm[i]] > max[perm[i]]) {
+                  max[perm[i]] = shared_limits[perm[i]];
                 }
               } else {
-                if (shared_limits[i] < min[i]) {
-                  min[i] = shared_limits[i];
+                if (shared_limits[perm[i]] < min[perm[i]]) {
+                  min[perm[i]] = shared_limits[perm[i]];
                 }
               }
             }
@@ -738,16 +738,16 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             // This thread can't be first in, so must be last.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (shared_limits[i] < max[i]) {
-                  shared_limits[i] = max[i];
+                if (shared_limits[perm[i]] < max[perm[i]]) {
+                  shared_limits[perm[i]] = max[perm[i]];
                 } else {
-                  max[i] = shared_limits[i];
+                  max[perm[i]] = shared_limits[perm[i]];
                 }
               } else {
-                if (shared_limits[i] > min[i]) {
-                  shared_limits[i] = min[i];
+                if (shared_limits[perm[i]] > min[perm[i]]) {
+                  shared_limits[perm[i]] = min[perm[i]];
                 } else {
-                  min[i] = shared_limits[i];
+                  min[perm[i]] = shared_limits[perm[i]];
                 }
               }
             }
