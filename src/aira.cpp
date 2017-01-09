@@ -38,6 +38,10 @@ std::condition_variable ready_cv;
 int num_threads;
 int cplex_threads;
 
+/* perms[i] is the permutation (as indexed by sym_group.cpp) that will be
+  * used by thread i. */
+int * perms = nullptr;
+
 double midpoint = 0;
 bool split;
 /* Number of IPs we've solved */
@@ -71,6 +75,7 @@ int main (int argc, char *argv[])
 
   int status = 0; /* Operation status */
 
+  std::string permString;
   Env e;
 
   std::string pFilename, outputFilename;
@@ -103,6 +108,14 @@ int main (int argc, char *argv[])
      "Note that each internal thread calls CPLEX, so the total number of\n"
      "threads used is threads*cplex_threads.\n"
      "Optional, defaults to 1.")
+    ("perms", po::value<std::string>(&permString),
+     "The permutations (as indexed by sym_group.cpp) to be used by each "
+     "the threads. These must be entered as a comma separated list\n"
+     "  e.g. 1,2,5,6,9,10\n"
+     "Note that to ensure correctness, for even i we must have\n"
+     "  permutation[i] being odd\n"
+     "and\n"
+     "  permutation[i+1] = permutation[i] + 1\n")
   ;
 
   po::store(po::parse_command_line(argc, argv, opt), v);
@@ -123,6 +136,7 @@ int main (int argc, char *argv[])
   }
 
   Problem p(pFilename.c_str(), cplex_threads);
+
 
 
   std::ofstream outFile;
@@ -186,6 +200,65 @@ int main (int argc, char *argv[])
      if ( status ) {
        std::cerr << "Could not close CPLEX environment." << std::endl;
      }
+  }
+
+  // Assign permutations to threads
+  if (v.count("perms") == 1) {
+    perms = new int[num_threads];
+    int index = 0;
+    std::string::iterator it = permString.begin();
+    while (it != permString.end()) {
+      if (index >= num_threads) {
+        std::cerr << "Error in permutation string - too many permutations "
+            "for " << num_threads << " threads." << std::endl;
+        return -1;
+      }
+      // Move past commas
+      while (*it == ',')
+        it++;
+      // Check to see if we ended on a comma
+      if (it == permString.end())
+        break;
+      std::string token(it, permString.end());
+      // Find next comma
+      size_t next_comma = token.find(',');
+      // If no more commas, this is the last entry
+      if (std::string::npos == next_comma) {
+        it = permString.end();
+        perms[index] = std::atoi(token.c_str());
+      } else {
+        it += next_comma;
+        token.resize(next_comma);
+        perms[index] = std::atoi(token.c_str());
+      }
+
+      // Make sure the permutation is valid.
+      if (perms[index] >= S[p.objcnt].size()) {
+        std::cerr << "Invalid permutation : " << perms[index] << " is too big" <<
+          "(" << S[p.objcnt].size() << ")." << std::endl;
+        return -1;
+      }
+      if ((index % 2 == 0)) {
+        if ((perms[index] % 2) != 1) {
+          std::cerr << "Invalid permutation string at " << perms[index] <<
+            " - must be odd." << std::endl;
+          return -1;
+        }
+      } else {
+        if (perms[index] != perms[index-1]+1) {
+          std::cerr << "Invalid permutation string at " << perms[index] <<
+            " - must equal one more than previous permutation (" <<
+            perms[index-1] << ")." << std::endl;
+          return -1;
+        }
+      }
+      index++;
+    }
+    if (index != num_threads) {
+      std::cerr << "Error in permutation string - not enough permutations "
+          "for " << num_threads << " threads." << std::endl;
+      return -1;
+    }
   }
 
   outFile << std::endl << "Using improved algorithm" << std::endl;
@@ -442,6 +515,10 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
+  int perm_id = thread_id;
+  if (nullptr != perms) {
+    perm_id = perms[thread_id];
+  }
   const int* perm = S[p.objcnt][thread_id];
 
   std::atomic<double> &my_limit = shared_limits[perm[0]];
