@@ -27,13 +27,16 @@
 std::mutex debug_mutex;
 #endif
 
-/* The threads need to synchronise the limits on objectives 3 through n */
-std::mutex status_mutex;
-std::mutex ready_mutex;
 enum Status { RUNNING, DONE };
-std::atomic<Status> thread_status;
-std::condition_variable cv;
-std::condition_variable ready_cv;
+
+/* The threads need to synchronise the limits on objectives 3 through n */
+struct Locking_Vars {
+  std::mutex status_mutex;
+  std::mutex ready_mutex;
+  std::atomic<Status> thread_status;
+  std::condition_variable cv;
+  std::condition_variable ready_cv;
+} ;
 
 int num_threads;
 int cplex_threads;
@@ -62,9 +65,9 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives);
  * objective.
  **/
 void optimise(int thread_id, const char * fname, Solutions &all,
-    std::mutex & solutionMutex, std::atomic<double> *shared_limits,
-    std::atomic<double> *global_limits, std::list<int*> * my_feasibles,
-    std::list<int*> * partner_feasibles);
+    std::mutex & solutionMutex, Locking_Vars *lv,
+    std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
+    std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -284,25 +287,32 @@ int main (int argc, char *argv[])
     global_limits[i] = lim;
   }
 
+  std::list<Locking_Vars*> locking_var_list;
   for (int t = 0; t < num_threads; t += 2) {
     std::atomic<double> *shared_limits = new std::atomic<double>[p.objcnt];
+    Locking_Vars *lv = new Locking_Vars;
+    lv->thread_status = RUNNING;
+    locking_var_list.push_back(lv);
     for (int i = 0; i < p.objcnt; ++i) {
       shared_limits[i] = lim;
     }
     std::list<int *> *t1_solns = new std::list<int *>;
     std::list<int *> *t2_solns = new std::list<int *>;
     threads.emplace_back(optimise,
-        t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
+        t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
         shared_limits, global_limits, t1_solns, t2_solns);
     // Only launch second thread in pair if we have an even number of threads
     if ((num_threads % 2) == 0) {
       threads.emplace_back(optimise,
-          t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
+          t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
           shared_limits, global_limits, t2_solns, t1_solns);
     }
   }
   for (auto& thread: threads)
     thread.join();
+
+  for (auto lv: locking_var_list)
+    delete lv;
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
@@ -415,9 +425,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 
 
 void optimise(int thread_id, const char * pFilename, Solutions & all,
-    std::mutex &solutionMutex, std::atomic<double> *shared_limits,
-    std::atomic<double> *global_limits, std::list<int *> * my_feasibles,
-    std::list<int *> * partner_feasibles) {
+    std::mutex &solutionMutex, Locking_Vars *lv,
+    std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
+    std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles) {
   Env e;
   Problem p(pFilename, cplex_threads);
   int status;
@@ -490,17 +500,17 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   // Share the midpoint if splitting
   if (split && num_threads > 1) {
     {
-      std::unique_lock<std::mutex> lk(status_mutex);
+      std::unique_lock<std::mutex> lk(lv->status_mutex);
       if (midpoint == 0) {
         // First in, wait.
         midpoint += ((double)result[0])/2;
-        cv.wait(lk);
+        lv->cv.wait(lk);
       } else {
         // Second in, update and keep going
         midpoint += ((double)result[0])/2;
       }
     }
-    cv.notify_all();
+    lv->cv.notify_all();
   }
 
   /* Need to add a result to the list here*/
@@ -707,9 +717,9 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 #endif
         bool wait = false;
         {
-          std::unique_lock<std::mutex> lk(status_mutex);
-          if (thread_status == RUNNING) {
-            thread_status = DONE; // This thread was first in.
+          std::unique_lock<std::mutex> lk(lv->status_mutex);
+          if (lv->thread_status == RUNNING) {
+            lv->thread_status = DONE; // This thread was first in.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
                 shared_limits[perm[i]] = max[perm[i]];
@@ -722,7 +732,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
-            cv.wait(lk); // Wait for partner to update limits.
+            lv->cv.wait(lk); // Wait for partner to update limits.
 #ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
@@ -811,7 +821,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               delete[] last;
               delete[] lp;
             }
-          } else if (thread_status == DONE) {
+          } else if (lv->thread_status == DONE) {
             // This thread can't be first in, so must be last.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
@@ -912,7 +922,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             // Note the typecasting to avoid the deleted copy constructor.
             my_limit = (double)global_limits[perm[0]];
             partner_limit = (double)global_limits[perm[1]];
-            thread_status = RUNNING;
+            lv->thread_status = RUNNING;
           }
         }
         if(wait) {
@@ -921,20 +931,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
           // the second thread before it is ready to be notified (causing 2nd
           // thread to get stuck forever).
           {
-            std::unique_lock<std::mutex> ready_lk(ready_mutex);
+            std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
           }
           // Tell second thread to run.
-          ready_cv.notify_all();
+          lv->ready_cv.notify_all();
         } else {
-          std::unique_lock<std::mutex> ready_lk(ready_mutex);
+          std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
           // Notify first thread to keep going
-          cv.notify_all();
+          lv->cv.notify_all();
 #ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
           // Wait for first thread to be ready
-          ready_cv.wait(ready_lk);
+          lv->ready_cv.wait(ready_lk);
 #ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
