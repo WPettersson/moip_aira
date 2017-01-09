@@ -105,7 +105,7 @@ int main (int argc, char *argv[])
     ("cplex_threads,c",
         po::value<int>(&cplex_threads)->default_value(1),
      "Number of threads to allocate to CPLEX.\n"
-     "Note that each internal thread calls CPLEX, so the total number of\n"
+     "Note that each internal thread calls CPLEX, so the total number of "
      "threads used is threads*cplex_threads.\n"
      "Optional, defaults to 1.")
     ("perms", po::value<std::string>(&permString),
