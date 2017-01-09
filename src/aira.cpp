@@ -111,9 +111,9 @@ int main (int argc, char *argv[])
     ("perms", po::value<std::string>(&permString),
      "The permutations (as indexed by sym_group.cpp) to be used by each "
      "the threads. These must be entered as a comma separated list\n"
-     "  e.g. 1,2,5,6,9,10\n"
+     "  e.g. 0,1,4,5,8,9\n"
      "Note that to ensure correctness, for even i we must have\n"
-     "  permutation[i] being odd\n"
+     "  permutation[i] being even\n"
      "and\n"
      "  permutation[i+1] = permutation[i] + 1\n")
   ;
@@ -239,9 +239,9 @@ int main (int argc, char *argv[])
         return -1;
       }
       if ((index % 2 == 0)) {
-        if ((perms[index] % 2) != 1) {
+        if ((perms[index] % 2) != 0) {
           std::cerr << "Invalid permutation string at " << perms[index] <<
-            " - must be odd." << std::endl;
+            " - must be even." << std::endl;
           return -1;
         }
       } else {
