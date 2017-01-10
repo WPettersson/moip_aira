@@ -960,11 +960,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
       if (infcnt == objective_counter-1) {
-        if ((objective_counter == p.objcnt - 1) || (false) ) {
+        if (objective_counter == p.objcnt - 1) {
           if (p.objsen == MIN) {
-            global_limits[perm[p.objcnt-1]] = max[perm[p.objcnt-1]]-1;
+            global_limits[objective] = max[objective]-1;
           } else {
-            global_limits[perm[p.objcnt-1]] = min[perm[p.objcnt-1]]+1;
+            global_limits[objective] = min[objective]+1;
           }
         }
         /* Set all contraints back to infinity */
