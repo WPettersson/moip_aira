@@ -529,7 +529,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   if (nullptr != perms) {
     perm_id = perms[thread_id];
   }
-  const int* perm = S[p.objcnt][thread_id];
+  const int* perm = S[p.objcnt][perm_id];
 
   std::atomic<double> &my_limit = shared_limits[perm[0]];
   std::atomic<double> &partner_limit = shared_limits[perm[1]];
