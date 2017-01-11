@@ -51,7 +51,7 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
     }
     /* If all conditions are met copy problem & solution and return */
     if (t1 && t3) {
-#ifdef DEBUG_SOLUTION_SEARCH
+#if defined(DEBUG) && defined(DEBUG_SOLUTION_SEARCH)
       debug_mutex.lock();
       std::cout << " relaxed to ";
       for(int i = 0; i < objective_count; ++i) {
@@ -76,7 +76,7 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
       return res;
     }
   }
-#ifdef DEBUG_SOLUTION_SEARCH
+#if defined(DEBUG) && defined(DEBUG_SOLUTION_SEARCH)
   debug_mutex.lock();
   std::cout << " no relaxation found" << std::endl;
   debug_mutex.unlock();
