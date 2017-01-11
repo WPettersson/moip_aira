@@ -76,6 +76,11 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
       return res;
     }
   }
+#ifdef DEBUG_SOLUTION_SEARCH
+  debug_mutex.lock();
+  std::cout << " no relaxation found" << std::endl;
+  debug_mutex.unlock();
+#endif
   return nullptr;
 }
 void Solutions::insert(const double *lp, const int *result,

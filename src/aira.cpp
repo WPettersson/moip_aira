@@ -576,7 +576,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       /* Look for possible relaxations to the current problem*/
       const Result *relaxation;
 
-
+#ifdef DEBUG_SOLUTION_SEARCH
+      debug_mutex.lock();
+      std::cout << "Thread " << thread_id;
+      debug_mutex.unlock();
+#endif
       relaxation = s.find(rhs, p.objsen);
       relaxed = (relaxation != nullptr);
       if (relaxed) {
