@@ -413,6 +413,12 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
       std::cerr << "Failed to obtain objective value." << std::endl;
       exit(0);
     }
+    if ( objval > 1/p.mip_tolerance ) {
+      while (objval > 1/p.mip_tolerance) {
+        p.mip_tolerance /= 10;
+      }
+      CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+    }
 
     //p.result[j] = srhs[j] = round(objval);
     result[j] = srhs[j] = round(objval);
