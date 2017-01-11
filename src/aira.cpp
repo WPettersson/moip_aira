@@ -1006,7 +1006,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         depth = perm[depth_level];
         onwalk = false;
       } else if (inflast && infcnt != objective_counter) {
-        rhs[depth] = CPX_INFBOUND;
+        if (p.objsen == MIN) {
+          rhs[depth] = CPX_INFBOUND;
+        } else {
+          rhs[depth] = -CPX_INFBOUND;
+        }
         depth_level++;
         depth = perm[depth_level];
         if (p.objsen == MIN) {
