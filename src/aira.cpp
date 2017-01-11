@@ -52,7 +52,7 @@ std::atomic<int> ipcount;
 
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
+int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id);
 
 int read_lp_problem(Env& e, Problem& p, bool store_objectives);
 int read_mop_problem(Env& e, Problem& p, bool store_objectives);
@@ -366,13 +366,13 @@ int main (int argc, char *argv[])
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id) {
 
   int cur_numcols, status, solnstat;
   double objval;
   double * srhs;
   srhs = new double[p.objcnt];
-  const int *perm = S[p.objcnt][thread_id];
+  const int *perm = S[p.objcnt][perm_id];
 
   //for(int i = 0; i < p.objcnt; ++i)
   //  srhs[i] = rhs[perm[i]];
@@ -473,6 +473,12 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   }
   Solutions s(p.objcnt);
 
+  int perm_id = thread_id;
+  if (nullptr != perms) {
+    perm_id = perms[thread_id];
+  }
+  const int* perm = S[p.objcnt][perm_id];
+
   int infcnt;
   bool inflast;
   bool infeasible;
@@ -488,7 +494,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   clock_gettime(CLOCK_MONOTONIC, &start);
   double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-  int solnstat = solve(e, p, result, rhs, thread_id);
+  int solnstat = solve(e, p, result, rhs, perm_id);
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
@@ -531,12 +537,15 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
-  int perm_id = thread_id;
-  if (nullptr != perms) {
-    perm_id = perms[thread_id];
-  }
-  const int* perm = S[p.objcnt][perm_id];
-
+#ifdef DEBUG
+    debug_mutex.lock();
+    std::cout << "Thread " << thread_id << " using permutation ";
+    for (int i = 0; i < p.objcnt; ++i) {
+      std::cout << perm[i] <<  ", ";
+    }
+    std::cout << std::endl;
+    debug_mutex.unlock();
+#endif
   std::atomic<double> &my_limit = shared_limits[perm[0]];
   std::atomic<double> &partner_limit = shared_limits[perm[1]];
 
@@ -593,7 +602,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         clock_gettime(CLOCK_MONOTONIC, &start);
         double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-        solnstat = solve(e, p, result, rhs, thread_id);
+        solnstat = solve(e, p, result, rhs, perm_id);
 #ifdef FINETIMING
         clock_gettime(CLOCK_MONOTONIC, &start);
         cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
