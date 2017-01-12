@@ -114,11 +114,7 @@ int main (int argc, char *argv[])
     ("perms", po::value<std::string>(&permString),
      "The permutations (as indexed by sym_group.cpp) to be used by each "
      "the threads. These must be entered as a comma separated list\n"
-     "  e.g. 0,1,4,5,8,9\n"
-     "Note that to ensure correctness, for even i we must have\n"
-     "  permutation[i] being even\n"
-     "and\n"
-     "  permutation[i+1] = permutation[i] + 1\n")
+     "  e.g. 0,1,4,5,8,9\n")
   ;
 
   po::store(po::parse_command_line(argc, argv, opt), v);
@@ -241,20 +237,6 @@ int main (int argc, char *argv[])
           "(" << S[p.objcnt].size() << ")." << std::endl;
         return -1;
       }
-      if ((index % 2 == 0)) {
-        if ((perms[index] % 2) != 0) {
-          std::cerr << "Invalid permutation string at " << perms[index] <<
-            " - must be even." << std::endl;
-          return -1;
-        }
-      } else {
-        if (perms[index] != perms[index-1]+1) {
-          std::cerr << "Invalid permutation string at " << perms[index] <<
-            " - must equal one more than previous permutation (" <<
-            perms[index-1] << ")." << std::endl;
-          return -1;
-        }
-      }
       index++;
     }
     if (index != num_threads) {
@@ -289,15 +271,28 @@ int main (int argc, char *argv[])
 
   std::list<Locking_Vars*> locking_var_list;
   for (int t = 0; t < num_threads; t += 2) {
-    std::atomic<double> *shared_limits = new std::atomic<double>[p.objcnt];
     Locking_Vars *lv = new Locking_Vars;
     lv->thread_status = RUNNING;
     locking_var_list.push_back(lv);
-    for (int i = 0; i < p.objcnt; ++i) {
-      shared_limits[i] = lim;
+
+    std::atomic<double> *shared_limits = nullptr;
+    std::list<int *> *t1_solns = nullptr;
+    std::list<int *> *t2_solns = nullptr;
+    // We can share relaxations and limits if there is something to share them with,
+    // and if the next thread is using an appropriate permutation
+    if ((t+1 < num_threads) &&
+        (
+         (perms == nullptr) || // No perms specified is ok for sharing.
+         ((perms[t] % 2 == 0) && (perms[t] + 1 == perms[t+1]))
+        )
+      ) { // Can share limits+relaxations
+      shared_limits = new std::atomic<double>[p.objcnt];
+      for (int i = 0; i < p.objcnt; ++i) {
+        shared_limits[i] = lim;
+      }
+      t1_solns = new std::list<int *>;
+      t2_solns = new std::list<int *>;
     }
-    std::list<int *> *t1_solns = new std::list<int *>;
-    std::list<int *> *t2_solns = new std::list<int *>;
     threads.emplace_back(optimise,
         t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
         shared_limits, global_limits, t1_solns, t2_solns);
@@ -437,6 +432,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   Env e;
   Problem p(pFilename, cplex_threads);
   int status;
+  const bool sharing = (shared_limits != nullptr);
 #ifdef FINETIMING
   double cplex_time = 0;
   double wait_time = 0;
@@ -527,7 +523,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 
   /* Need to add a result to the list here*/
   s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
-  if (solnstat != CPXMIP_INFEASIBLE) {
+  if (sharing && (solnstat != CPXMIP_INFEASIBLE)) {
     int *objectives = new int[p.objcnt];
     for (int i = 0; i < p.objcnt; ++i) {
       objectives[i] = result[i];
@@ -549,7 +545,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   std::atomic<double> &my_limit = shared_limits[perm[0]];
   std::atomic<double> &partner_limit = shared_limits[perm[1]];
 
-  if ((solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
+  if (sharing && (solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
     partner_limit = result[perm[1]];
   }
   for (int j = 0; j < p.objcnt; j++) {
@@ -630,7 +626,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             }
           }
         }
-      } else {
+      } else if (sharing) {
         // Not splitting.
         /* We want to keep the actual objective vector, and share it with our
         * partner as a relaxation. */
@@ -682,7 +678,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       }
       debug_mutex.unlock();
 #endif
-      if (!infeasible && (num_threads > 1) && (infcnt == 0)) {
+      if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             // Pretend infeasible to backtrack properly
@@ -728,7 +724,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
 
-      if (infeasible && (infcnt == 1) && (num_threads > 1)) { // Wait/share results of 2-objective problem
+      if (sharing && infeasible && (infcnt == 1) && (num_threads > 1)) { // Wait/share results of 2-objective problem
 #ifdef DEBUG
         debug_mutex.lock();
         std::cout << "Thread " << thread_id <<  " done" << std::endl;
