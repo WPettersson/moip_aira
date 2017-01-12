@@ -665,7 +665,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
         std::cout << std::endl;
       }
-      if (!infeasible && (num_threads > 1) && (infcnt == 0)) {
+      if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
