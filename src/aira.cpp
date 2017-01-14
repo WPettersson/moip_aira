@@ -297,7 +297,7 @@ int main (int argc, char *argv[])
         t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
         shared_limits, global_limits, t1_solns, t2_solns);
     // Only launch second thread in pair if we have an even number of threads
-    if ((num_threads % 2) == 0) {
+    if (t+1 < num_threads) {
       threads.emplace_back(optimise,
           t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
           shared_limits, global_limits, t2_solns, t1_solns);
