@@ -27,7 +27,7 @@
 std::mutex debug_mutex;
 #endif
 
-enum Status { RUNNING, DONE };
+enum Status { RUNNING, DONE, BAILED };
 
 /* The threads need to synchronise the limits on objectives 3 through n */
 struct Locking_Vars {
@@ -724,10 +724,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
 
-      if (sharing && infeasible && (infcnt == 1) && (num_threads > 1)) { // Wait/share results of 2-objective problem
+      // If we are sharing, and the other thread hasn't bailed, and this result
+      // is infeasible, and it's a 2-objective problem
+      if (sharing && (lv->thread_status != BAILED) && infeasible && (infcnt == 1)) { // Wait/share results of 2-objective problem
 #ifdef DEBUG
         debug_mutex.lock();
-        std::cout << "Thread " << thread_id <<  " done" << std::endl;
+        std::cout << "Thread " << thread_id <<  " done, status is ";
+        if (lv->thread_status == RUNNING) {
+          std::cout << "RUNNING";
+        } else if (lv->thread_status == DONE) {
+          std::cout << "DONE";
+        } else if (lv->thread_status == BAILED) {
+          std::cout << "BAILED";
+        }
+        std::cout << std::endl;
         debug_mutex.unlock();
 #endif
         bool wait = false;
@@ -1038,6 +1048,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         onwalk = false;
       }
     }
+  }
+  {
+    std::unique_lock<std::mutex> lk(lv->status_mutex);
+    if (lv->thread_status == DONE) {
+      // Other thread is done, let it continue.
+      lv->cv.notify_all();
+    }
+    // Tell other thread that we are done, so it doesn't start waiting.
+    lv->thread_status = BAILED;
+#ifdef DEBUG
+    debug_mutex.lock();
+    std::cout << "Thread " << thread_id << " bailing" << std::endl;
+    debug_mutex.unlock();
+#endif
   }
   solutionMutex.lock();
 #ifdef FINETIMING
