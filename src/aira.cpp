@@ -431,7 +431,6 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles) {
   Env e;
   Problem p(pFilename, cplex_threads);
-  int status;
   const bool sharing = (shared_limits != nullptr);
 #ifdef FINETIMING
   double cplex_time = 0;
@@ -440,25 +439,28 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   clock_gettime(CLOCK_MONOTONIC, &start);
   double total_time = start.tv_sec + start.tv_nsec/1e9;
 #endif
-  /* Initialize the CPLEX environment */
-  e.env = CPXopenCPLEX (&status);
-  if (status != 0) {
-    std::cerr << "Could not open CPLEX environment." << std::endl;
-  }
+  {
+    int status; // Only need status here.
+    /* Initialize the CPLEX environment */
+    e.env = CPXopenCPLEX (&status);
+    if (status != 0) {
+      std::cerr << "Could not open CPLEX environment." << std::endl;
+    }
 
-  /* Set to deterministic parallel mode */
-  status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
+    /* Set to deterministic parallel mode */
+    status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
-  /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
+    /* Set to only one thread */
+    CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
-  if (e.env == NULL) {
-    std::cerr << "Could not open CPLEX environment." << std::endl;
-  }
+    if (e.env == NULL) {
+      std::cerr << "Could not open CPLEX environment." << std::endl;
+    }
 
-  status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
-  if (status) {
-    std::cerr << "Failure to turn off screen indicator." << std::endl;
+    status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
+    if (status) {
+      std::cerr << "Failure to turn off screen indicator." << std::endl;
+    }
   }
 
 
