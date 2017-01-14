@@ -45,7 +45,7 @@ int cplex_threads;
   * used by thread i. */
 int * perms = nullptr;
 
-double midpoint = 0;
+double midpoint = CPX_INFBOUND;
 bool split;
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
@@ -280,7 +280,7 @@ int main (int argc, char *argv[])
     std::list<int *> *t2_solns = nullptr;
     // We can share relaxations and limits if there is something to share them with,
     // and if the next thread is using an appropriate permutation
-    if ((t+1 < num_threads) &&
+    if ((t+1 < num_threads) && (!split) &&
         (
          (perms == nullptr) || // No perms specified is ok for sharing.
          ((perms[t] % 2 == 0) && (perms[t] + 1 == perms[t+1]))
@@ -511,9 +511,9 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   if (split && num_threads > 1) {
     {
       std::unique_lock<std::mutex> lk(lv->status_mutex);
-      if (midpoint == 0) {
+      if (midpoint == CPX_INFBOUND) {
         // First in, wait.
-        midpoint += ((double)result[0])/2;
+        midpoint = ((double)result[0])/2;
         lv->cv.wait(lk);
       } else {
         // Second in, update and keep going
@@ -994,9 +994,13 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             global_limits[objective] = min[objective]+1;
           }
         }
-        /* Set all contraints back to infinity */
+        /* Set all constraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-          rhs[j] = global_limits[j];
+          if ((j==0) && (split)) {
+            rhs[j] = midpoint;
+          } else {
+            rhs[j] = global_limits[j];
+          }
         }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
