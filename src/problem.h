@@ -23,6 +23,7 @@ class Problem {
      */
     int cplex_threads;
 
+    double mip_tolerance;
 
     const char* filename_;
     filetype_t filetype;

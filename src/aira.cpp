@@ -27,25 +27,32 @@
 std::mutex debug_mutex;
 #endif
 
+enum Status { RUNNING, DONE, BAILED };
+
 /* The threads need to synchronise the limits on objectives 3 through n */
-std::mutex status_mutex;
-std::mutex ready_mutex;
-enum Status { RUNNING, DONE };
-std::atomic<Status> thread_status;
-std::condition_variable cv;
-std::condition_variable ready_cv;
+struct Locking_Vars {
+  std::mutex status_mutex;
+  std::mutex ready_mutex;
+  std::atomic<Status> thread_status;
+  std::condition_variable cv;
+  std::condition_variable ready_cv;
+} ;
 
 int num_threads;
 int cplex_threads;
 
-double midpoint = 0;
+/* perms[i] is the permutation (as indexed by sym_group.cpp) that will be
+  * used by thread i. */
+int * perms = nullptr;
+
+double midpoint = CPX_INFBOUND;
 bool split;
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
 
 
 /* Solve CLMOIP and return status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id);
+int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id);
 
 int read_lp_problem(Env& e, Problem& p, bool store_objectives);
 int read_mop_problem(Env& e, Problem& p, bool store_objectives);
@@ -58,8 +65,8 @@ int read_mop_problem(Env& e, Problem& p, bool store_objectives);
  * objective.
  **/
 void optimise(int thread_id, const char * fname, Solutions &all,
-    std::mutex & solutionMutex, std::atomic<double>& my_limit,
-    std::atomic<double>& partner_limit, std::atomic<double> *rest_limits,
+    std::mutex & solutionMutex, Locking_Vars *lv,
+    std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
     std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
@@ -71,6 +78,7 @@ int main (int argc, char *argv[])
 
   int status = 0; /* Operation status */
 
+  std::string permString;
   Env e;
 
   std::string pFilename, outputFilename;
@@ -100,9 +108,13 @@ int main (int argc, char *argv[])
     ("cplex_threads,c",
         po::value<int>(&cplex_threads)->default_value(1),
      "Number of threads to allocate to CPLEX.\n"
-     "Note that each internal thread calls CPLEX, so the total number of\n"
+     "Note that each internal thread calls CPLEX, so the total number of "
      "threads used is threads*cplex_threads.\n"
      "Optional, defaults to 1.")
+    ("perms", po::value<std::string>(&permString),
+     "The permutations (as indexed by sym_group.cpp) to be used by each "
+     "the threads. These must be entered as a comma separated list\n"
+     "  e.g. 0,1,4,5,8,9\n")
   ;
 
   po::store(po::parse_command_line(argc, argv, opt), v);
@@ -123,6 +135,7 @@ int main (int argc, char *argv[])
   }
 
   Problem p(pFilename.c_str(), cplex_threads);
+
 
 
   std::ofstream outFile;
@@ -188,6 +201,51 @@ int main (int argc, char *argv[])
      }
   }
 
+  // Assign permutations to threads
+  if (v.count("perms") == 1) {
+    perms = new int[num_threads];
+    int index = 0;
+    std::string::iterator it = permString.begin();
+    while (it != permString.end()) {
+      if (index >= num_threads) {
+        std::cerr << "Error in permutation string - too many permutations "
+            "for " << num_threads << " threads." << std::endl;
+        return -1;
+      }
+      // Move past commas
+      while (*it == ',')
+        it++;
+      // Check to see if we ended on a comma
+      if (it == permString.end())
+        break;
+      std::string token(it, permString.end());
+      // Find next comma
+      size_t next_comma = token.find(',');
+      // If no more commas, this is the last entry
+      if (std::string::npos == next_comma) {
+        it = permString.end();
+        perms[index] = std::atoi(token.c_str());
+      } else {
+        it += next_comma;
+        token.resize(next_comma);
+        perms[index] = std::atoi(token.c_str());
+      }
+
+      // Make sure the permutation is valid.
+      if (perms[index] >= S[p.objcnt].size()) {
+        std::cerr << "Invalid permutation : " << perms[index] << " is too big" <<
+          "(" << S[p.objcnt].size() << ")." << std::endl;
+        return -1;
+      }
+      index++;
+    }
+    if (index != num_threads) {
+      std::cerr << "Error in permutation string - not enough permutations "
+          "for " << num_threads << " threads." << std::endl;
+      return -1;
+    }
+  }
+
   outFile << std::endl << "Using improved algorithm" << std::endl;
 
   /* Start the timer */
@@ -200,41 +258,56 @@ int main (int argc, char *argv[])
   if (num_threads > S[p.objcnt].size())
     num_threads = S[p.objcnt].size();
 
-  if (num_threads > 2)
-    num_threads = 2;
-
   std::list<std::thread> threads;
   Solutions all(p.objcnt);
   std::mutex solutionMutex;
 
-  // Each pair of threads shares two of these limits.
-  // If we have an odd number of threads (including 1) then we don't want to
-  // access invalid memory, and one extra double is unlikely to break any
-  // memory constraints.
-  std::atomic<double> *limits = new std::atomic<double>[p.objcnt];
+  std::atomic<double> *global_limits = new std::atomic<double>[p.objcnt];
 
-  if (p.objsen == MIN) {
-    limits[0] = CPX_INFBOUND;
-    limits[1] = CPX_INFBOUND;
-  } else {
-    limits[0] = -CPX_INFBOUND;
-    limits[1] = -CPX_INFBOUND;
+  double lim = (p.objsen == MIN) ? CPX_INFBOUND : -CPX_INFBOUND;
+  for (int i = 0; i < p.objcnt; ++i) {
+    global_limits[i] = lim;
   }
-  std::list<int *> *t1_solns = new std::list<int *>;
-  std::list<int *> *t2_solns = new std::list<int *>;
-  threads.emplace_back(optimise,
-      0, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
-      std::ref(limits[0]), std::ref(limits[1]), limits,
-      t1_solns, t2_solns);
-  // Odd number of threads
-  if (num_threads == 2) {
+
+  std::list<Locking_Vars*> locking_var_list;
+  for (int t = 0; t < num_threads; t += 2) {
+    Locking_Vars *lv = new Locking_Vars;
+    lv->thread_status = RUNNING;
+    locking_var_list.push_back(lv);
+
+    std::atomic<double> *shared_limits = nullptr;
+    std::list<int *> *t1_solns = nullptr;
+    std::list<int *> *t2_solns = nullptr;
+    // We can share relaxations and limits if there is something to share them with,
+    // and if the next thread is using an appropriate permutation
+    if ((t+1 < num_threads) && (!split) &&
+        (
+         (perms == nullptr) || // No perms specified is ok for sharing.
+         ((perms[t] % 2 == 0) && (perms[t] + 1 == perms[t+1]))
+        )
+      ) { // Can share limits+relaxations
+      shared_limits = new std::atomic<double>[p.objcnt];
+      for (int i = 0; i < p.objcnt; ++i) {
+        shared_limits[i] = lim;
+      }
+      t1_solns = new std::list<int *>;
+      t2_solns = new std::list<int *>;
+    }
     threads.emplace_back(optimise,
-        1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex),
-        std::ref(limits[1]), std::ref(limits[0]), limits,
-        t2_solns, t1_solns);
+        t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+        shared_limits, global_limits, t1_solns, t2_solns);
+    // Only launch second thread in pair if we have an even number of threads
+    if (t+1 < num_threads) {
+      threads.emplace_back(optimise,
+          t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+          shared_limits, global_limits, t2_solns, t1_solns);
+    }
   }
   for (auto& thread: threads)
     thread.join();
+
+  for (auto lv: locking_var_list)
+    delete lv;
 
   /* Stop the clock. Sort and print results.*/
   endtime = clock();
@@ -288,13 +361,13 @@ int main (int argc, char *argv[])
 }
 
 /* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
+int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id) {
 
   int cur_numcols, status, solnstat;
   double objval;
   double * srhs;
   srhs = new double[p.objcnt];
-  const int *perm = S[p.objcnt][thread_id];
+  const int *perm = S[p.objcnt][perm_id];
 
   //for(int i = 0; i < p.objcnt; ++i)
   //  srhs[i] = rhs[perm[i]];
@@ -335,6 +408,12 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
       std::cerr << "Failed to obtain objective value." << std::endl;
       exit(0);
     }
+    if ( objval > 1/p.mip_tolerance ) {
+      while (objval > 1/p.mip_tolerance) {
+        p.mip_tolerance /= 10;
+      }
+      CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+    }
 
     //p.result[j] = srhs[j] = round(objval);
     result[j] = srhs[j] = round(objval);
@@ -347,12 +426,12 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int thread_id) {
 
 
 void optimise(int thread_id, const char * pFilename, Solutions & all,
-    std::mutex &solutionMutex, std::atomic<double> & my_limit,
-    std::atomic<double> & partner_limit, std::atomic<double> *rest_limits,
+    std::mutex &solutionMutex, Locking_Vars *lv,
+    std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
     std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles) {
   Env e;
   Problem p(pFilename, cplex_threads);
-  int status;
+  const bool sharing = (shared_limits != nullptr);
 #ifdef FINETIMING
   double cplex_time = 0;
   double wait_time = 0;
@@ -360,25 +439,28 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   clock_gettime(CLOCK_MONOTONIC, &start);
   double total_time = start.tv_sec + start.tv_nsec/1e9;
 #endif
-  /* Initialize the CPLEX environment */
-  e.env = CPXopenCPLEX (&status);
-  if (status != 0) {
-    std::cerr << "Could not open CPLEX environment." << std::endl;
-  }
+  {
+    int status; // Only need status here.
+    /* Initialize the CPLEX environment */
+    e.env = CPXopenCPLEX (&status);
+    if (status != 0) {
+      std::cerr << "Could not open CPLEX environment." << std::endl;
+    }
 
-  /* Set to deterministic parallel mode */
-  status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
+    /* Set to deterministic parallel mode */
+    status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
-  /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
+    /* Set to only one thread */
+    CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
 
-  if (e.env == NULL) {
-    std::cerr << "Could not open CPLEX environment." << std::endl;
-  }
+    if (e.env == NULL) {
+      std::cerr << "Could not open CPLEX environment." << std::endl;
+    }
 
-  status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
-  if (status) {
-    std::cerr << "Failure to turn off screen indicator." << std::endl;
+    status = CPXsetintparam(e.env, CPX_PARAM_SCRIND, CPX_OFF);
+    if (status) {
+      std::cerr << "Failure to turn off screen indicator." << std::endl;
+    }
   }
 
 
@@ -388,6 +470,12 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     read_mop_problem(e, p, true /* store_objective*/);
   }
   Solutions s(p.objcnt);
+
+  int perm_id = thread_id;
+  if (nullptr != perms) {
+    perm_id = perms[thread_id];
+  }
+  const int* perm = S[p.objcnt][perm_id];
 
   int infcnt;
   bool inflast;
@@ -404,7 +492,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   clock_gettime(CLOCK_MONOTONIC, &start);
   double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-  int solnstat = solve(e, p, result, rhs, thread_id);
+  int solnstat = solve(e, p, result, rhs, perm_id);
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
@@ -422,22 +510,22 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   // Share the midpoint if splitting
   if (split && num_threads > 1) {
     {
-      std::unique_lock<std::mutex> lk(status_mutex);
-      if (midpoint == 0) {
+      std::unique_lock<std::mutex> lk(lv->status_mutex);
+      if (midpoint == CPX_INFBOUND) {
         // First in, wait.
-        midpoint += ((double)result[0])/2;
-        cv.wait(lk);
+        midpoint = ((double)result[0])/2;
+        lv->cv.wait(lk);
       } else {
         // Second in, update and keep going
         midpoint += ((double)result[0])/2;
       }
     }
-    cv.notify_all();
+    lv->cv.notify_all();
   }
 
   /* Need to add a result to the list here*/
   s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
-  if (solnstat != CPXMIP_INFEASIBLE) {
+  if (sharing && (solnstat != CPXMIP_INFEASIBLE)) {
     int *objectives = new int[p.objcnt];
     for (int i = 0; i < p.objcnt; ++i) {
       objectives[i] = result[i];
@@ -447,9 +535,19 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   min = new int[p.objcnt];
   max = new int[p.objcnt];
 
-  const int* perm = S[p.objcnt][thread_id];
+#ifdef DEBUG
+    debug_mutex.lock();
+    std::cout << "Thread " << thread_id << " using permutation ";
+    for (int i = 0; i < p.objcnt; ++i) {
+      std::cout << perm[i] <<  ", ";
+    }
+    std::cout << std::endl;
+    debug_mutex.unlock();
+#endif
+  std::atomic<double> &my_limit = shared_limits[perm[0]];
+  std::atomic<double> &partner_limit = shared_limits[perm[1]];
 
-  if ((solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
+  if (sharing && (solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
     partner_limit = result[perm[1]];
   }
   for (int j = 0; j < p.objcnt; j++) {
@@ -465,18 +563,10 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
 
     /* Set all constraints back to infinity*/
     for (int j = 0; j < p.objcnt; j++) {
-      if (p.objsen == MIN) {
-        if (split && (thread_id == 0) && (j == 0))
-          rhs[j] = midpoint;
-        else
-          rhs[j] = CPX_INFBOUND;
-      }
-      else {
-        if (split && (thread_id == 0) && (j == 0))
-          rhs[j] = midpoint;
-        else
-          rhs[j] = -CPX_INFBOUND;
-      }
+      if (split && (thread_id == 0) && (j == 0))
+        rhs[j] = midpoint;
+      else
+        rhs[j] = global_limits[j];
     }
     /* Set rhs of current depth */
     if (p.objsen == MIN) {
@@ -493,7 +583,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       /* Look for possible relaxations to the current problem*/
       const Result *relaxation;
 
-
+#ifdef DEBUG_SOLUTION_SEARCH
+      debug_mutex.lock();
+      std::cout << "Thread " << thread_id;
+      debug_mutex.unlock();
+#endif
       relaxation = s.find(rhs, p.objsen);
       relaxed = (relaxation != nullptr);
       if (relaxed) {
@@ -506,7 +600,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         clock_gettime(CLOCK_MONOTONIC, &start);
         double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-        solnstat = solve(e, p, result, rhs, thread_id);
+        solnstat = solve(e, p, result, rhs, perm_id);
 #ifdef FINETIMING
         clock_gettime(CLOCK_MONOTONIC, &start);
         cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
@@ -534,7 +628,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             }
           }
         }
-      } else {
+      } else if (sharing) {
         // Not splitting.
         /* We want to keep the actual objective vector, and share it with our
         * partner as a relaxation. */
@@ -573,7 +667,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
         std::cout << std::endl;
       }
-      if (!infeasible && (num_threads > 1) && (infcnt == 0)) {
+      if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
@@ -586,7 +680,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       }
       debug_mutex.unlock();
 #endif
-      if (!infeasible && (num_threads > 1) && (infcnt == 0)) {
+      if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
         if (p.objsen == MIN) {
           if (result[perm[0]] >= my_limit) {
             // Pretend infeasible to backtrack properly
@@ -632,22 +726,32 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
 
-      if (infeasible && (infcnt == 1) && (num_threads > 1)) { // Wait/share results of 2-objective problem
+      // If we are sharing, and the other thread hasn't bailed, and this result
+      // is infeasible, and it's a 2-objective problem
+      if (sharing && (lv->thread_status != BAILED) && infeasible && (infcnt == 1)) { // Wait/share results of 2-objective problem
 #ifdef DEBUG
         debug_mutex.lock();
-        std::cout << "Thread " << thread_id <<  " done" << std::endl;
+        std::cout << "Thread " << thread_id <<  " done, status is ";
+        if (lv->thread_status == RUNNING) {
+          std::cout << "RUNNING";
+        } else if (lv->thread_status == DONE) {
+          std::cout << "DONE";
+        } else if (lv->thread_status == BAILED) {
+          std::cout << "BAILED";
+        }
+        std::cout << std::endl;
         debug_mutex.unlock();
 #endif
         bool wait = false;
         {
-          std::unique_lock<std::mutex> lk(status_mutex);
-          if (thread_status == RUNNING) {
-            thread_status = DONE; // This thread was first in.
+          std::unique_lock<std::mutex> lk(lv->status_mutex);
+          if (lv->thread_status == RUNNING) {
+            lv->thread_status = DONE; // This thread was first in.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                rest_limits[i] = max[i];
+                shared_limits[perm[i]] = max[perm[i]];
               } else {
-                rest_limits[i] = min[i];
+                shared_limits[perm[i]] = min[perm[i]];
               }
             }
             wait = true;
@@ -655,19 +759,19 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
-            cv.wait(lk); // Wait for partner to update limits.
+            lv->cv.wait(lk); // Wait for partner to update limits.
 #ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
 #endif
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (rest_limits[i] > max[i]) {
-                  max[i] = rest_limits[i];
+                if (shared_limits[perm[i]] > max[perm[i]]) {
+                  max[perm[i]] = shared_limits[perm[i]];
                 }
               } else {
-                if (rest_limits[i] < min[i]) {
-                  min[i] = rest_limits[i];
+                if (shared_limits[perm[i]] < min[perm[i]]) {
+                  min[perm[i]] = shared_limits[perm[i]];
                 }
               }
             }
@@ -681,11 +785,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               for( int i = 2; i < p.objcnt; ++i) {
                 lp[perm[i]] = rhs[perm[i]];
               }
-              if (p.objsen == MIN) {
-                lp[perm[0]] = CPX_INFBOUND;
-              } else {
-                lp[perm[0]] = -CPX_INFBOUND;
-              }
+              lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
               if (p.objsen == MIN) {
@@ -748,20 +848,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               delete[] last;
               delete[] lp;
             }
-          } else if (thread_status == DONE) {
+          } else if (lv->thread_status == DONE) {
             // This thread can't be first in, so must be last.
             for(int i = 2; i < p.objcnt; ++i) {
               if (p.objsen == MIN) {
-                if (rest_limits[i] < max[i]) {
-                  rest_limits[i] = max[i];
+                if (shared_limits[perm[i]] < max[perm[i]]) {
+                  shared_limits[perm[i]] = max[perm[i]];
                 } else {
-                  max[i] = rest_limits[i];
+                  max[perm[i]] = shared_limits[perm[i]];
                 }
               } else {
-                if (rest_limits[i] > min[i]) {
-                  rest_limits[i] = min[i];
+                if (shared_limits[perm[i]] > min[perm[i]]) {
+                  shared_limits[perm[i]] = min[perm[i]];
                 } else {
-                  min[i] = rest_limits[i];
+                  min[perm[i]] = shared_limits[perm[i]];
                 }
               }
             }
@@ -775,11 +875,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               for( int i = 2; i < p.objcnt; ++i) {
                 lp[perm[i]] = rhs[perm[i]];
               }
-              if (p.objsen == MIN) {
-                lp[perm[0]] = CPX_INFBOUND;
-              } else {
-                lp[perm[0]] = -CPX_INFBOUND;
-              }
+              lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
               if (p.objsen == MIN) {
@@ -849,14 +945,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             * easiest way of achieving this. Note that we reset limits before
             * notifying the other thread, so the other thread will not start the
             * next run until limits are reset too. */
-            if (p.objsen == MIN) {
-              my_limit = CPX_INFBOUND;
-              partner_limit = CPX_INFBOUND;
-            } else {
-              my_limit = -CPX_INFBOUND;
-              partner_limit = -CPX_INFBOUND;
-            }
-            thread_status = RUNNING;
+
+            // Note the typecasting to avoid the deleted copy constructor.
+            my_limit = (double)global_limits[perm[0]];
+            partner_limit = (double)global_limits[perm[1]];
+            lv->thread_status = RUNNING;
           }
         }
         if(wait) {
@@ -865,20 +958,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
           // the second thread before it is ready to be notified (causing 2nd
           // thread to get stuck forever).
           {
-            std::unique_lock<std::mutex> ready_lk(ready_mutex);
+            std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
           }
           // Tell second thread to run.
-          ready_cv.notify_all();
+          lv->ready_cv.notify_all();
         } else {
-          std::unique_lock<std::mutex> ready_lk(ready_mutex);
+          std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
           // Notify first thread to keep going
-          cv.notify_all();
+          lv->cv.notify_all();
 #ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
           // Wait for first thread to be ready
-          ready_cv.wait(ready_lk);
+          lv->ready_cv.wait(ready_lk);
 #ifdef FINETIMING
           clock_gettime(CLOCK_MONOTONIC, &start);
           wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
@@ -886,13 +979,27 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
 
+      if ((p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
+        if (p.objsen == MIN) {
+          global_limits[perm[p.objcnt-1]] = max[perm[p.objcnt-1]]-1;
+        } else {
+          global_limits[perm[p.objcnt-1]] = min[perm[p.objcnt-1]]+1;
+        }
+      }
       if (infcnt == objective_counter-1) {
-        /* Set all contraints back to infinity */
-        for (int j = 0; j < p.objcnt; j++) {
+        if ((p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
           if (p.objsen == MIN) {
-            rhs[j] = CPX_INFBOUND;
+            global_limits[objective] = max[objective]-1;
           } else {
-            rhs[j] = -CPX_INFBOUND;
+            global_limits[objective] = min[objective]+1;
+          }
+        }
+        /* Set all constraints back to infinity */
+        for (int j = 0; j < p.objcnt; j++) {
+          if ((j==0) && (split)) {
+            rhs[j] = midpoint;
+          } else {
+            rhs[j] = global_limits[j];
           }
         }
         /* In the case of a minimisation problem
@@ -911,7 +1018,11 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         depth = perm[depth_level];
         onwalk = false;
       } else if (inflast && infcnt != objective_counter) {
-        rhs[depth] = CPX_INFBOUND;
+        if (p.objsen == MIN) {
+          rhs[depth] = CPX_INFBOUND;
+        } else {
+          rhs[depth] = -CPX_INFBOUND;
+        }
         depth_level++;
         depth = perm[depth_level];
         if (p.objsen == MIN) {
@@ -943,6 +1054,20 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         onwalk = false;
       }
     }
+  }
+  {
+    std::unique_lock<std::mutex> lk(lv->status_mutex);
+    if (lv->thread_status == DONE) {
+      // Other thread is done, let it continue.
+      lv->cv.notify_all();
+    }
+    // Tell other thread that we are done, so it doesn't start waiting.
+    lv->thread_status = BAILED;
+#ifdef DEBUG
+    debug_mutex.lock();
+    std::cout << "Thread " << thread_id << " bailing" << std::endl;
+    debug_mutex.unlock();
+#endif
   }
   solutionMutex.lock();
 #ifdef FINETIMING
