@@ -268,6 +268,7 @@ int main (int argc, char *argv[])
       std::cout << "Infeasible" << std::endl;
       return 0;
     }
+    all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
 #ifdef DEBUG
     debug_mutex.lock();
     std::cout << "Main thread with constraints ";
@@ -299,6 +300,7 @@ int main (int argc, char *argv[])
       std::cout << "Infeasible" << std::endl;
       return 0;
     }
+    all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
 #ifdef DEBUG
     debug_mutex.lock();
     std::cout << "Main thread with constraints ";
