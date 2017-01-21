@@ -496,6 +496,17 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id) {
         p.mip_tolerance /= 10;
       }
       CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+      status = CPXmipopt (e.env, e.lp);
+      ipcount++;
+      solnstat = CPXgetstat (e.env, e.lp);
+      if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+        break;
+      }
+      status = CPXgetobjval (e.env, e.lp, &objval);
+      if ( status ) {
+        std::cerr << "Failed to obtain objective value." << std::endl;
+        exit(0);
+      }
     }
 
     //p.result[j] = srhs[j] = round(objval);
