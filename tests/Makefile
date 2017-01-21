@@ -1,6 +1,6 @@
 EXDIR = ../Examples
 
-all: 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
+all: 2KP50 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 
 %:
 	@echo -n "Testing $* "
@@ -38,6 +38,18 @@ all: 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t4 passed " && rm 4KP10.out || echo -n "t4 failed "
 	@$(TARGETDIR)/aira -t 4 --perms 0,1,6,7 -p $(EXDIR)/4KP10.lp -o 4KP10.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t4-altperms passed " && rm 4KP10.out || echo -n "t4-altperms failed "
+	@echo
+
+2KP50:
+	@echo -n "Testing 2KP50 "
+	@$(TARGETDIR)/aira -p $(EXDIR)/2KP50.lp -o 2KP50.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/2KP50.out 2KP50.out && echo -n "t1-c1 passed " && rm 2KP50.out || echo -n "t1-c1 failed "
+	@$(TARGETDIR)/aira -t 2 -p $(EXDIR)/2KP50.lp -o 2KP50.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/2KP50.out 2KP50.out && echo -n "t2-c1 passed " && rm 2KP50.out || echo -n "t2-c1 failed "
+	@$(TARGETDIR)/aira -c 2 -p $(EXDIR)/2KP50.lp -o 2KP50.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/2KP50.out 2KP50.out && echo -n "t1-c2 passed " && rm 2KP50.out || echo -n "t1-c2 failed "
+	@$(TARGETDIR)/aira -t 2 -s -p $(EXDIR)/2KP50.lp -o 2KP50.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/2KP50.out 2KP50.out && echo -n "t2-split passed " && rm 2KP50.out || echo -n "t2-split failed "
 	@echo
 
 2AP05:
