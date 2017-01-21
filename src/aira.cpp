@@ -270,23 +270,23 @@ int main (int argc, char *argv[])
       return 0;
     }
 #ifdef DEBUG
-  debug_mutex.lock();
-  std::cout << "Main thread with constraints ";
-  for(int i = 0; i < p.objcnt; ++i) {
-    if (rhs[i] > 1e19)
-      std::cout << "∞";
-    else if (rhs[i] < -1e19)
-      std::cout << "-∞";
-    else
-      std::cout << rhs[i];
-    std::cout << ",";
-  }
-  std::cout << " found ";
-  for(int i = 0; i < p.objcnt; ++i) {
-    std::cout << result[i] << ",";
-  }
-  std::cout << std::endl;
-  debug_mutex.unlock();
+    debug_mutex.lock();
+    std::cout << "Main thread with constraints ";
+    for(int i = 0; i < p.objcnt; ++i) {
+      if (rhs[i] > 1e19)
+        std::cout << "∞";
+      else if (rhs[i] < -1e19)
+        std::cout << "-∞";
+      else
+        std::cout << rhs[i];
+      std::cout << ",";
+    }
+    std::cout << " found ";
+    for(int i = 0; i < p.objcnt; ++i) {
+      std::cout << result[i] << ",";
+    }
+    std::cout << std::endl;
+    debug_mutex.unlock();
 #endif
     start_point = result[p.objcnt-1];
     if (p.objsen == MIN) {
@@ -301,23 +301,23 @@ int main (int argc, char *argv[])
       return 0;
     }
 #ifdef DEBUG
-  debug_mutex.lock();
-  std::cout << "Main thread with constraints ";
-  for(int i = 0; i < p.objcnt; ++i) {
-    if (rhs[i] > 1e19)
-      std::cout << "∞";
-    else if (rhs[i] < -1e19)
-      std::cout << "-∞";
-    else
-      std::cout << rhs[i];
-    std::cout << ",";
-  }
-  std::cout << " found ";
-  for(int i = 0; i < p.objcnt; ++i) {
-    std::cout << result[i] << ",";
-  }
-  std::cout << std::endl;
-  debug_mutex.unlock();
+    debug_mutex.lock();
+    std::cout << "Main thread with constraints ";
+    for(int i = 0; i < p.objcnt; ++i) {
+      if (rhs[i] > 1e19)
+        std::cout << "∞";
+      else if (rhs[i] < -1e19)
+        std::cout << "-∞";
+      else
+        std::cout << rhs[i];
+      std::cout << ",";
+    }
+    std::cout << " found ";
+    for(int i = 0; i < p.objcnt; ++i) {
+      std::cout << result[i] << ",";
+    }
+    std::cout << std::endl;
+    debug_mutex.unlock();
 #endif
     stop_point = result[p.objcnt-1];
     if (p.objsen == MIN) {
@@ -516,10 +516,12 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   Problem p(pFilename, cplex_threads);
   const bool sharing = (shared_limits != nullptr);
 #ifdef DEBUG
-  debug_mutex.lock();
-  std::cout << "Thread " << thread_id << " has start ";
-  std::cout << split_start << " and stop " << split_stop << std::endl;
-  debug_mutex.unlock();
+  if (split) {
+    debug_mutex.lock();
+    std::cout << "Thread " << thread_id << " has start ";
+    std::cout << split_start << " and stop " << split_stop << std::endl;
+    debug_mutex.unlock();
+  }
 #endif
 #ifdef FINETIMING
   double cplex_time = 0;
