@@ -45,7 +45,6 @@ int cplex_threads;
   * used by thread i. */
 int * perms = nullptr;
 
-double midpoint = CPX_INFBOUND;
 bool split;
 /* Number of IPs we've solved */
 std::atomic<int> ipcount;
@@ -1100,11 +1099,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
         /* Set all constraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-          if ((j==0) && (split)) {
-            rhs[j] = midpoint;
-          } else {
-            rhs[j] = global_limits[j];
-          }
+          rhs[j] = global_limits[j];
         }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
