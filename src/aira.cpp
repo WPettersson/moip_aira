@@ -59,6 +59,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id);
  * thread_id is the index into S_n of the order in which we optimise each
  * objective.
  **/
+template<Sense sense>
 void optimise(int thread_id, const char * fname, Solutions &all,
     std::mutex & solutionMutex, Locking_Vars *lv,
     std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
@@ -339,18 +340,30 @@ int main (int argc, char *argv[])
       split_start = start_point;
       split_stop = (start_point+stop_point)/2;
     }
-    threads.emplace_back(optimise,
-        t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
-        shared_limits, global_limits, t1_solns, t2_solns, split_start, split_stop);
+    if (p.objsen == MIN) {
+      threads.emplace_back(optimise<MIN>,
+          t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+          shared_limits, global_limits, t1_solns, t2_solns, split_start, split_stop);
+    } else {
+      threads.emplace_back(optimise<MAX>,
+          t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+          shared_limits, global_limits, t1_solns, t2_solns, split_start, split_stop);
+    }
     // Only launch second thread in pair if we have an even number of threads
     if (t+1 < num_threads) {
       if (split) {
         split_stop = stop_point;
         split_start = (start_point+stop_point)/2;
       }
-      threads.emplace_back(optimise,
-          t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
-          shared_limits, global_limits, t2_solns, t1_solns, split_start, split_stop);
+      if (p.objsen == MIN) {
+        threads.emplace_back(&optimise<MIN>,
+            t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+            shared_limits, global_limits, t2_solns, t1_solns, split_start, split_stop);
+      } else {
+        threads.emplace_back(&optimise<MAX>,
+            t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+            shared_limits, global_limits, t2_solns, t1_solns, split_start, split_stop);
+      }
     }
   }
   /* Free up memory as all we needed was a count of the number of objectives. */
@@ -499,7 +512,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id) {
   return solnstat;
 }
 
-
+template<Sense sense>
 void optimise(int thread_id, const char * pFilename, Solutions & all,
     std::mutex &solutionMutex, Locking_Vars *lv,
     std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
@@ -679,7 +692,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         rhs[perm[p.objcnt]] = split_start;
     }
     /* Set rhs of current depth */
-    if (p.objsen == MIN) {
+    if (sense == MIN) {
       rhs[objective] = max[objective]-1;
     }
     else {
@@ -743,7 +756,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         std::cout << std::endl;
       }
       if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           if (result[perm[0]] >= my_limit) {
             std::cout << "Thread " << thread_id << " result found by partner, bailing." << std::endl;
           }
@@ -758,7 +771,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       if (split) {
         if (!infeasible) {
           // check if we cross midpoint if we are thread 1
-          if (p.objsen == MIN) {
+          if (sense == MIN) {
             if (result[p.objcnt-1] < split_stop) {
               infeasible = true;
 #ifdef DEBUG
@@ -797,7 +810,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
       }
       if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           if (result[perm[0]] >= my_limit) {
             // Pretend infeasible to backtrack properly
             infeasible = true;
@@ -864,7 +877,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
           if (lv->thread_status == RUNNING) {
             lv->thread_status = DONE; // This thread was first in.
             for(int i = 2; i < p.objcnt; ++i) {
-              if (p.objsen == MIN) {
+              if (sense == MIN) {
                 shared_limits[perm[i]] = max[perm[i]];
               } else {
                 shared_limits[perm[i]] = min[perm[i]];
@@ -881,7 +894,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
 #endif
             for(int i = 2; i < p.objcnt; ++i) {
-              if (p.objsen == MIN) {
+              if (sense == MIN) {
                 if (shared_limits[perm[i]] > max[perm[i]]) {
                   max[perm[i]] = shared_limits[perm[i]];
                 }
@@ -904,7 +917,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
-              if (p.objsen == MIN) {
+              if (sense == MIN) {
                 lp[perm[1]] = res[perm[1]] - 1;
               } else {
                 lp[perm[1]] = res[perm[1]] + 1;
@@ -929,7 +942,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               while (! my_feasibles->empty()) {
                 res = my_feasibles->front();
                 my_feasibles->pop_front();
-                if (p.objsen == MIN) {
+                if (sense == MIN) {
                   lp[perm[1]] = res[perm[1]] - 1;
                 } else {
                   lp[perm[1]] = res[perm[1]] + 1;
@@ -967,7 +980,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
           } else if (lv->thread_status == DONE) {
             // This thread can't be first in, so must be last.
             for(int i = 2; i < p.objcnt; ++i) {
-              if (p.objsen == MIN) {
+              if (sense == MIN) {
                 if (shared_limits[perm[i]] < max[perm[i]]) {
                   shared_limits[perm[i]] = max[perm[i]];
                 } else {
@@ -994,7 +1007,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               lp[perm[0]] = global_limits[perm[0]];
               int *res = my_feasibles->front();
               my_feasibles->pop_front();
-              if (p.objsen == MIN) {
+              if (sense == MIN) {
                 lp[perm[1]] = res[perm[1]] - 1;
               } else {
                 lp[perm[1]] = res[perm[1]] + 1;
@@ -1019,7 +1032,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
               while (! my_feasibles->empty()) {
                 res = my_feasibles->front();
                 my_feasibles->pop_front();
-                if (p.objsen == MIN) {
+                if (sense == MIN) {
                   lp[perm[1]] = res[perm[1]] - 1;
                 } else {
                   lp[perm[1]] = res[perm[1]] + 1;
@@ -1096,7 +1109,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       }
 
       if ((p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           global_limits[perm[p.objcnt-1]] = max[perm[p.objcnt-1]]-1;
         } else {
           global_limits[perm[p.objcnt-1]] = min[perm[p.objcnt-1]]+1;
@@ -1104,7 +1117,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       }
       if (infcnt == objective_counter-1) {
         if ((p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
-          if (p.objsen == MIN) {
+          if (sense == MIN) {
             global_limits[objective] = max[objective]-1;
           } else {
             global_limits[objective] = min[objective]+1;
@@ -1117,7 +1130,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
         } else {
@@ -1130,14 +1143,14 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         depth = perm[depth_level];
         onwalk = false;
       } else if (inflast && infcnt != objective_counter) {
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           rhs[depth] = CPX_INFBOUND;
         } else {
           rhs[depth] = -CPX_INFBOUND;
         }
         depth_level++;
         depth = perm[depth_level];
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         } else {
@@ -1146,7 +1159,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
         }
         onwalk = true;
       } else if (!onwalk && infcnt != 1) {
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         } else {
@@ -1156,7 +1169,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
       } else if (onwalk && infcnt != 1)  {
         depth_level = 1;
         depth = perm[depth_level];
-        if (p.objsen == MIN) {
+        if (sense == MIN) {
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         } else {
