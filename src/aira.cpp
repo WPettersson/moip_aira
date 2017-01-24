@@ -133,7 +133,6 @@ int main (int argc, char *argv[])
     return(1);
   }
 
-  Problem p(pFilename.c_str(), cplex_threads);
 
 
 
@@ -152,11 +151,13 @@ int main (int argc, char *argv[])
   /* Initialize the CPLEX environment */
   e.env = CPXopenCPLEX (&status);
 
+  Problem p(pFilename.c_str(), e);
+
   /* Set to deterministic parallel mode */
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
   /* Set to only one thread */
-  CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
+  CPXsetintparam(e.env, CPXPARAM_Threads, cplex_threads);
 
   if (e.env == NULL) {
     std::cerr << "Could not open CPLEX environment." << std::endl;
@@ -524,7 +525,6 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles,
     double split_start, double split_stop) {
   Env e;
-  Problem p(pFilename, cplex_threads);
   const bool sharing = (shared_limits != nullptr);
 #ifdef DEBUG
   if (split) {
@@ -553,7 +553,7 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 
     /* Set to only one thread */
-    CPXsetintparam(e.env, CPXPARAM_Threads, p.cplex_threads);
+    CPXsetintparam(e.env, CPXPARAM_Threads, cplex_threads);
 
     if (e.env == NULL) {
       std::cerr << "Could not open CPLEX environment." << std::endl;
@@ -565,12 +565,8 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     }
   }
 
+  Problem p(pFilename, e);
 
-  if (p.filetype == LP) {
-    read_lp_problem(e, p, true /* store_objective*/);
-  } else if (p.filetype == MOP) {
-    read_mop_problem(e, p, true /* store_objective*/);
-  }
   Solutions s(p.objcnt);
 
   int perm_id = thread_id;

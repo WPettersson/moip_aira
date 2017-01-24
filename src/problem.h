@@ -2,6 +2,7 @@
 #define PROBLEM_H
 
 #include "sense.h"
+#include "env.h"
 
 enum filetype_t { UNKNOWN, LP, MOP };
 
@@ -17,21 +18,19 @@ class Problem {
     int* conind;
     char* consense;
 
-    /**
-     * cplex_threads is a problem parameter, because each thread needs to know
-     * the number of cplex threads to use.
-     */
-    int cplex_threads;
-
     double mip_tolerance;
 
-    const char* filename_;
     filetype_t filetype;
 
     const char* filename();
 
-    Problem(const char* filename, int cplex_threads);
+    Problem(const char* filename, Env& env);
     ~Problem();
+
+  private:
+    int read_lp_problem(Env& e);
+    int read_mop_problem(Env& e);
+    const char* filename_;
 
 };
 
