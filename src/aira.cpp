@@ -658,6 +658,30 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     }
   }
 
+
+  /**
+   * objective_counter marks which objectives are currently active. Note that
+   * the first objective (highest priority) is 0, which we never make active.
+   *
+   * That is, if the current permutation is 1,2,3,4,5 and objective_counter is
+   * 1, then we are trying to optimise objective 2. In other words, objectives
+   * 3,4,5 all have their limits set to +- infinity, and these won't change
+   * until objective_counter increases.
+   *
+   * If objective_counter is 3, then we are changing objectives 2,3 and 4.
+   */
+
+  /**
+   * depth tracks which of the active objectives is the one being currently
+   * modified. If objective_counter is 3, then the active objectives are 2,3
+   * and 4. If depth is 1, then objective 2 is the one for which we are
+   * changing the RHS.
+   */
+
+  /**
+   * onwalk is true if the current active depth (as indicated by the depth
+   * variable) was just increased.
+   */
   for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
     int objective = perm[objective_counter];
     int depth_level = 1; /* Track current "recursion" depth */
