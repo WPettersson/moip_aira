@@ -17,8 +17,7 @@
 #include "symgroup.h"
 #include "result.h"
 #include "solutions.h"
-
-#define ERR_CPLEX -1
+#include "errors.h"
 
 //#define DEBUG
 //#define FINETIMING
