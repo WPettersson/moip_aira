@@ -100,11 +100,10 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id);
  * objective.
  **/
 template<Sense sense>
-void optimise(int thread_id, const char * fname, Solutions &all,
-    std::mutex & solutionMutex, Locking_Vars *lv,
-    std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
-    std::list<int*> * my_feasibles, std::list<int*> * partner_feasibles,
-    double split_start, double split_stop);
+void optimise(int thread_id, const char * fname, Solutions &all, Locking_Vars
+    *lv, std::atomic<double> *shared_limits, std::atomic<double>
+    *global_limits, std::list<int*> * my_feasibles, std::list<int*> *
+    partner_feasibles, double split_start, double split_stop);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
@@ -268,7 +267,6 @@ int main (int argc, char *argv[])
 
   std::list<std::thread> threads;
   Solutions all(p.objcnt);
-  std::mutex solutionMutex;
 
   std::atomic<double> *global_limits = new std::atomic<double>[p.objcnt];
 
@@ -382,11 +380,11 @@ int main (int argc, char *argv[])
     }
     if (p.objsen == MIN) {
       threads.emplace_back(optimise<MIN>,
-          t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+          t, pFilename.c_str(), std::ref(all), lv,
           shared_limits, global_limits, t1_solns, t2_solns, split_start, split_stop);
     } else {
       threads.emplace_back(optimise<MAX>,
-          t, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+          t, pFilename.c_str(), std::ref(all), lv,
           shared_limits, global_limits, t1_solns, t2_solns, split_start, split_stop);
     }
     // Only launch second thread in pair if we have an even number of threads
@@ -397,11 +395,11 @@ int main (int argc, char *argv[])
       }
       if (p.objsen == MIN) {
         threads.emplace_back(&optimise<MIN>,
-            t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+            t+1, pFilename.c_str(), std::ref(all), lv,
             shared_limits, global_limits, t2_solns, t1_solns, split_start, split_stop);
       } else {
         threads.emplace_back(&optimise<MAX>,
-            t+1, pFilename.c_str(), std::ref(all), std::ref(solutionMutex), lv,
+            t+1, pFilename.c_str(), std::ref(all), lv,
             shared_limits, global_limits, t2_solns, t1_solns, split_start, split_stop);
       }
     }
@@ -554,7 +552,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id) {
 
 template<Sense sense>
 void optimise(int thread_id, const char * pFilename, Solutions & all,
-    std::mutex &solutionMutex, Locking_Vars *lv,
+    Locking_Vars *lv,
     std::atomic<double> *shared_limits, std::atomic<double> *global_limits,
     std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles,
     double split_start, double split_stop) {
@@ -1234,7 +1232,6 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
     debug_mutex.unlock();
 #endif
   }
-  solutionMutex.lock();
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   total_time = start.tv_sec + start.tv_nsec/1e9 - total_time;
@@ -1243,7 +1240,6 @@ void optimise(int thread_id, const char * pFilename, Solutions & all,
   std::cout << " and " << total_time << "s overall." << std::endl;
 #endif
   all.merge(s);
-  solutionMutex.unlock();
   delete[] resultStore;
   delete[] rhs;
   delete[] min;

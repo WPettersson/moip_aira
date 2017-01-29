@@ -1,9 +1,8 @@
-
-
 #ifndef SOLUTIONS_H
 #define SOLUTIONS_H
 
 #include <list>
+#include <mutex>
 #include "result.h"
 #include "sense.h"
 
@@ -30,7 +29,7 @@ class Solutions {
     // single list. We allocate objects inside insert(), and only free them in
     // the Solutions destructor.
     std::list<Result*> store_;
-
+    std::mutex mutex;
 };
 
 inline Solutions::Solutions(int numObjectives) : objective_count(numObjectives)
