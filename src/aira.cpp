@@ -28,7 +28,11 @@ std::mutex debug_mutex;
 
 enum Status { RUNNING, DONE, BAILED };
 
-/* The threads need to synchronise the limits on objectives 3 through n */
+/**
+ * Any pair of threads that are sharing solutions need to synchronise limits on
+ * the other objectives. This struct contains the necessary variables to handle
+ * such synchronisation.
+ */
 struct Locking_Vars {
   std::mutex status_mutex;
   std::mutex ready_mutex;
@@ -40,19 +44,55 @@ struct Locking_Vars {
 int num_threads;
 int cplex_threads;
 
-/* perms[i] is the permutation (as indexed by sym_group.cpp) that will be
-  * used by thread i. */
+/**
+ * perms[i] is the permutation (as indexed by sym_group.cpp) that will be
+ * used by thread i. perms remain a nullptr if no permutation is specified.
+ */
 int * perms = nullptr;
 
+/**
+ * Are we splitting up the range of values an objective can take, such that
+ * individual threads only find solutions in their own pre-determined range?
+ */
 bool split;
-/* Number of IPs we've solved */
+
+/**
+ * Track how many individual IPs we solve.
+ */
 std::atomic<int> ipcount;
 
 
-/* Solve CLMOIP and return status */
+/**
+ * Solves a CLMOIP and returns the status and result.
+ * Variables:
+ *
+ * \param e An Env object holding an environment suitable for solving IPs
+ * \param p The Problem object to be solved
+ * \param result An array of ints of size p.objcnt where the result will be
+ * stored
+ * \param rhs An array of doubles holding the right hand side of the problem
+ * \param perm_id The index of the permutation which denotes the hierarchy or
+ * ordering of the objectives, from most significant to least.
+ */
 int solve(Env & e, Problem & p, int * result, double * rhs, int perm_id);
 
-/* Optimise!
+/**
+ * Optimise!
+ * This function runs through the selected algorithm of Pettersson and
+ * Ozlen[1]. It is designed to be run multi-threaded, hence using locking
+ * mechanisms.
+ *
+ * \param thread_id An identifier for the thread running this function
+ * \pram fname The file name of the file holding the problem description
+ * \param all A Solutions object into which all solutions will be placed
+ * \param lv A Locking_Vars struct holding all synchronisation particulars for
+ * synchronisting two paired threads.
+ * \param shared_limits An array of atomic ints, used to share limits between
+ * two paired threads.
+ * \param global_limits An array of atomic ints, used to share limits amongst
+ * all running threads.
+ * \param my_feasibles
+ * \param partner_feasibles
  * first_result is the result of the optimisation with no constraints on
  * objective values.
  * p is the problem (class)
