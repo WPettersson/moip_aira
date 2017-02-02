@@ -85,14 +85,18 @@ void Solutions::insert(const double *lp, const int *result,
   Result * r = new Result;
   r->objective_count = objective_count;
   r->ip = new double[objective_count];
-  std::memcpy(r->ip, lp, objective_count * sizeof(double));
+  for (int i = 0; i < objective_count; ++i) {
+    r->ip[i] = lp[i];
+  }
   if (infeasible) {
     r->infeasible = true;
     r->result = nullptr;
   } else {
     r->infeasible = false;
     r->result = new int[objective_count];
-    std::memcpy(r->result, result, objective_count * sizeof(int));
+    for (int i = 0; i < objective_count; ++i) {
+      r->result[i] = result[i];
+    }
   }
   store_.push_back(r);
 }
