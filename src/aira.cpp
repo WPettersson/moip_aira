@@ -387,7 +387,7 @@ int main (int argc, char *argv[])
     int ** share_from = new int*[p.objcnt] {nullptr};
     int ** share_to = new int*[p.objcnt] {nullptr};
     Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
-    Cluster c(num_threads, p.objcnt, p.objsen, p.objcnt, ordering, share_from,
+    Cluster c(num_threads, p.objcnt, p.objsen, false /* spread_threads */, p.objcnt, ordering, share_from,
         share_to, threads, lvs);
     delete[] ordering;
     delete[] share_to;
@@ -1127,13 +1127,13 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #endif
             if (t->share_to[updated_objective] != nullptr) {
               if (sense == MIN) {
-                if (*t->share_to[updated_objective] > max[updated_objective]) {
+                if (*t->share_to[updated_objective] < max[updated_objective]) {
                   *t->share_to[updated_objective] = max[updated_objective];
                 } else {
                   max[updated_objective] = *t->share_to[updated_objective];
                 }
               } else {
-                if (*t->share_to[updated_objective] < min[updated_objective]) {
+                if (*t->share_to[updated_objective] > min[updated_objective]) {
                   *t->share_to[updated_objective] = min[updated_objective];
                 } else {
                   min[updated_objective] = *t->share_to[updated_objective];
@@ -1262,26 +1262,26 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         std::cout << "Thread " << t->id << " updating bound on " << t->perm(p.objcnt-1);
         std::cout << " to ";
         if (sense == MIN) {
-          std::cout << max[t->perm(p.objcnt-1)]-1;
+          std::cout << max[t->perm(p.objcnt-1)];
         } else {
-          std::cout << min[t->perm(p.objcnt-1)]+1;
+          std::cout << min[t->perm(p.objcnt-1)];
         }
         std::cout << std::endl;
         debug_mutex.unlock();
 #endif
         if (sense == MIN) {
-          *t->share_to[t->perm(p.objcnt-1)] = max[t->perm(p.objcnt-1)]-1;
+          *t->share_to[t->perm(p.objcnt-1)] = max[t->perm(p.objcnt-1)];
         } else {
-          *t->share_to[t->perm(p.objcnt-1)] = min[t->perm(p.objcnt-1)]+1;
+          *t->share_to[t->perm(p.objcnt-1)] = min[t->perm(p.objcnt-1)];
         }
       }
       if (infcnt == objective_counter-1) {
         if ((p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
           if (t->share_to[t->perm(p.objcnt-1)] != nullptr) {
             if (sense == MIN) {
-              *t->share_to[objective] = max[objective]-1;
+              *t->share_to[objective] = max[objective];
             } else {
-              *t->share_to[objective] = min[objective]+1;
+              *t->share_to[objective] = min[objective];
             }
           }
         }

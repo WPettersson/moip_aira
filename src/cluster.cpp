@@ -13,8 +13,9 @@
 #include "sense.h"
 #include "thread.h"
 #include "lockingvars.h"
+#include "symgroup.h" // S[n].size()
 
-Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * ordering, int ** share_to, int ** share_from, std::list<Thread*> & threads, Locking_Vars ** locks) {
+Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads, int nObjLeft, int * ordering, int ** share_to, int ** share_from, std::list<Thread*> & threads, Locking_Vars ** locks) {
   if (nThreads == 1) {
 #ifdef DEBUG
     std::cout << "Thread " << threads.size() << " has ordering ";
@@ -87,32 +88,16 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * orderi
       }
     }
 
-    // Split up threads
-    int perCluster = nThreads / nObjLeft;
-    int withExtra = nThreads % nObjLeft;
-    int i;
-    for(i = 0; i < withExtra ; ++i) {
-      ordering[ nObj - nObjLeft ] = objLeft[i];
-      int pos = nObj - objLeft[i] - 1;
-      locks[pos] = new Locking_Vars(perCluster + 1);
-      for(int j = 0; j < nObjLeft; ++j) {
-        int obj = objLeft[j];
-        if (obj == pos) {
-          share_to[obj] = new_shares[obj];
-        } else {
-          share_from[obj] = new_shares[obj];
-        }
-      }
-      Cluster(perCluster + 1, nObj, sense, nObjLeft - 1, ordering, share_to, share_from,
-          threads, locks);
-      share_to[pos] = nullptr;
-    }
-    if (perCluster > 0) {
-      for( ; i < nObjLeft ; ++i) {
+    if (spread_threads) {
+      // Split up threads
+      int perCluster = nThreads / nObjLeft;
+      int withExtra = nThreads % nObjLeft;
+      int i;
+      for(i = 0; i < withExtra ; ++i) {
         ordering[ nObj - nObjLeft ] = objLeft[i];
         int pos = nObj - objLeft[i] - 1;
-        locks[pos] = new Locking_Vars(perCluster);
-        for(int j = 0; j < nObj; ++j) {
+        locks[pos] = new Locking_Vars(perCluster + 1);
+        for(int j = 0; j < nObjLeft; ++j) {
           int obj = objLeft[j];
           if (obj == pos) {
             share_to[obj] = new_shares[obj];
@@ -120,9 +105,52 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * orderi
             share_from[obj] = new_shares[obj];
           }
         }
-        Cluster(perCluster, nObj, sense, nObjLeft - 1, ordering, share_to, share_from,
+        Cluster(perCluster + 1, nObj, sense, spread_threads, nObjLeft - 1, ordering, share_to, share_from,
             threads, locks);
         share_to[pos] = nullptr;
+      }
+      if (perCluster > 0) {
+        for( ; i < nObjLeft ; ++i) {
+          ordering[ nObj - nObjLeft ] = objLeft[i];
+          int pos = nObj - objLeft[i] - 1;
+          locks[pos] = new Locking_Vars(perCluster);
+          for(int j = 0; j < nObj; ++j) {
+            int obj = objLeft[j];
+            if (obj == pos) {
+              share_to[obj] = new_shares[obj];
+            } else {
+              share_from[obj] = new_shares[obj];
+            }
+          }
+          Cluster(perCluster, nObj, sense, spread_threads, nObjLeft - 1, ordering, share_to, share_from,
+              threads, locks);
+          share_to[pos] = nullptr;
+        }
+      }
+    } else { // grouping threads "near" each other
+      int threads_remaining = nThreads;
+      int i = 0; // Which objective we're currently assigning threads to.
+      while (threads_remaining > 0) {
+        int threads_to_use = (S[nObjLeft-1].size() > threads_remaining) ? threads_remaining : S[nObjLeft-1].size();
+        ordering[ nObj - nObjLeft ] = objLeft[i];
+        std::cout << "Assigning " << threads_to_use << " threads." << std::endl;
+        std::cout << "working on " << (nObj - nObjLeft) << std::endl;
+        std::cout << "ordering now is " << ordering[nObj - nObjLeft] << std::endl;
+        int pos = nObj - objLeft[i] - 1;
+        locks[pos] = new Locking_Vars(threads_to_use);
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = objLeft[j];
+          if (obj == pos) {
+            share_to[obj] = new_shares[obj];
+          } else {
+            share_from[obj] = new_shares[obj];
+          }
+        }
+        Cluster(threads_to_use, nObj, sense, spread_threads, nObjLeft - 1, ordering, share_to, share_from,
+            threads, locks);
+        threads_remaining -= threads_to_use;
+        share_to[pos] = nullptr;
+        ++i;
       }
     }
     delete[] objLeft;
