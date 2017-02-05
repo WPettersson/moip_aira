@@ -108,6 +108,8 @@ int main (int argc, char *argv[])
   double cpu_time_used, elapsedtime, startelapsed;
   int solcount;
 
+  bool spread = false;
+
   po::variables_map v;
   po::options_description opt("Options for aira");
   opt.add_options()
@@ -121,7 +123,11 @@ int main (int argc, char *argv[])
     ("split,s",
      po::bool_switch(&split),
      "Split the range of the first objective into one strip per thread\n"
-     "Optional, default to False.")
+     "Optional, defaults to False.")
+    ("spread",
+     po::bool_switch(&spread),
+     "Spread threads out over various subgroups of the symmetries, or cluster inside subgroups.\n"
+     "Option, defaults to False")
     ("threads,t",
       po::value<int>(&num_threads)->default_value(1),
      "Number of threads to use internally. Optional, default to 1.")
@@ -282,9 +288,9 @@ int main (int argc, char *argv[])
     debug_mutex.lock();
     std::cout << "Main thread with constraints ";
     for(int i = 0; i < p.objcnt; ++i) {
-      if (rhs[i] > 1e19)
+      if (rhs[i] > 1e09)
         std::cout << "∞";
-      else if (rhs[i] < -1e19)
+      else if (rhs[i] < -1e09)
         std::cout << "-∞";
       else
         std::cout << rhs[i];
@@ -314,9 +320,9 @@ int main (int argc, char *argv[])
     debug_mutex.lock();
     std::cout << "Main thread with constraints ";
     for(int i = 0; i < p.objcnt; ++i) {
-      if (rhs[i] > 1e19)
+      if (rhs[i] > 1e09)
         std::cout << "∞";
-      else if (rhs[i] < -1e19)
+      else if (rhs[i] < -1e09)
         std::cout << "-∞";
       else
         std::cout << rhs[i];
@@ -386,12 +392,15 @@ int main (int argc, char *argv[])
     int * ordering = new int[p.objcnt];
     int ** share_from = new int*[p.objcnt] {nullptr};
     int ** share_to = new int*[p.objcnt] {nullptr};
+    int ** share_bounds = new int*[p.objcnt] {nullptr};
+    int ** share_limit = new int*[p.objcnt] {nullptr};
     Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
-    Cluster c(num_threads, p.objcnt, p.objsen, false /* spread_threads */, p.objcnt, ordering, share_from,
-        share_to, threads, lvs);
+    Cluster c(num_threads, p.objcnt, p.objsen, spread, p.objcnt, ordering,
+        share_from, share_to, share_bounds, share_limit, threads, lvs);
     delete[] ordering;
     delete[] share_to;
     delete[] share_from;
+    delete[] share_bounds;
   }
   std::list<std::thread> threadList;
   if (p.objsen == MIN) {
@@ -673,7 +682,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     rhs[i] = p.rhs[i];
   }
   if (split) {
-    rhs[t->perm(p.objcnt)] = t->split_start;
+    rhs[t->perm(p.objcnt-1)] = t->split_start;
   }
 
 #ifdef FINETIMING
@@ -689,9 +698,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
   debug_mutex.lock();
   std::cout << "Thread " << t->id << " with constraints ";
   for(int i = 0; i < p.objcnt; ++i) {
-    if (rhs[i] > 1e19)
+    if (rhs[i] > 1e09)
       std::cout << "∞";
-    else if (rhs[i] < -1e19)
+    else if (rhs[i] < -1e09)
       std::cout << "-∞";
     else
       std::cout << rhs[i];
@@ -777,7 +786,8 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     int objective = t->perm(objective_counter);
     int depth_level = 1; /* Track current "recursion" depth */
     int depth = t->perm(depth_level); /* Track depth objective */
-    int onwalk = false; /* Are we on the move? */
+    bool onwalk = false; /* Are we on the move? */
+    //bool * found_any = new bool[p.objcnt] {false};
     infcnt = 0; /* Infeasible count*/
     inflast = false; /* Last iteration infeasible?*/
 
@@ -795,7 +805,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       }
     }
     if (split) {
-        rhs[t->perm(p.objcnt)] = t->split_start;
+        rhs[t->perm(p.objcnt-1)] = t->split_start;
     }
     /* Set rhs of current depth */
     if (sense == MIN) {
@@ -805,6 +815,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     }
     max[objective] = (int) -CPX_INFBOUND;
     min[objective] = (int) CPX_INFBOUND;
+//    if (t->share_from[objective] != nullptr) {
+//      max[objective] = min[objective] = *t->share_from[objective];
+//    }
     while (infcnt < objective_counter) {
       bool relaxed;
       int solnstat;
@@ -841,9 +854,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       debug_mutex.lock();
       std::cout << "Thread " << t->id << " with constraints ";
       for(int i = 0; i < p.objcnt; ++i) {
-        if (rhs[i] > 1e19)
+        if (rhs[i] > 1e09)
           std::cout << "∞";
-        else if (rhs[i] < -1e19)
+        else if (rhs[i] < -1e09)
           std::cout << "-∞";
         else
           std::cout << rhs[i];
@@ -916,33 +929,56 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         // ever reads it, and that this thread always improves the value of
         // this shared limit, so we can use this faster update.
         if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
-#ifdef DEBUG
-          debug_mutex.lock();
-          std::cout << "Thread " << t->id << " updating bound on " << t->perm(1);
-          std::cout << " to " << rhs[t->perm(1)] << std::endl;
-          debug_mutex.unlock();
-#endif
+//#ifdef DEBUG
+//          debug_mutex.lock();
+//          std::cout << "Thread " << t->id << " updating bound on " << t->perm(1);
+//          std::cout << " to " << rhs[t->perm(1)] << std::endl;
+//          debug_mutex.unlock();
+//#endif
           if (t->share_to[t->perm(1)] != nullptr)
             *t->share_to[t->perm(1)] = rhs[t->perm(1)];
         //  rhs[perm[0]] = my_limit;
         }
       }
 
-      // TODO Here, check _every_ value of i, not just i=0.
       if (sharing && !infeasible && (t->share_from[t->perm(0)] != nullptr)
           && (infcnt == 0)) {
         if (sense == MIN) {
           if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
             // Pretend infeasible to backtrack properly
             infeasible = true;
+            // Note that the partner found something, so reset infcnt and
+            // inflast
+            infcnt = 0;
+            inflast = false;
           }
         } else {
           if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
             // Pretend infeasible to backtrack properly
             infeasible = true;
+            // Note that the partner found something, so reset infcnt and
+            // inflast
+            infcnt = 0;
+            inflast = false;
           }
         }
         // Duplicate code as we are marking this result infeasible
+        /* Update maxima */
+        for (int j = 0; j < p.objcnt; j++) {
+          if (result[j] > max[j]) {
+            max[j] = result[j];
+          }
+        }
+        /* Update minima */
+        for (int j = 0; j < p.objcnt; j++) {
+          if (result[j] < min[j]) {
+            min[j] = result[j];
+          }
+        }
+      }
+      if (!infeasible) {
+        infcnt = 0;
+        inflast = false;
         /* Update maxima */
         for (int j = 0; j < p.objcnt; j++) {
           if (result[j] > max[j]) {
@@ -962,23 +998,10 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       } else {
         infcnt = 0;
         inflast = false;
-        /* Update maxima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] > max[j]) {
-            max[j] = result[j];
-          }
-        }
-        /* Update minima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] < min[j]) {
-            min[j] = result[j];
-          }
-        }
       }
-
       // If we are sharing, and there are other threads, and this result
       // is infeasible, and it's a 2-objective problem
-      if (sharing && infeasible) { //(lv->num_running_threads > 1) && (infcnt == 1)) { // Wait/share results of 2-objective problem
+      if (sharing && infeasible && (infcnt+1) < p.objcnt) { // Wait/share results of 2-objective problem
         int updated_objective = t->perm(infcnt+1);
 #ifdef DEBUG
         debug_mutex.lock();
@@ -987,35 +1010,36 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         std::cout << ", objective_counter is " << objective_counter;
         std::cout << ", updated_objective is " << updated_objective;
         if (sense == MIN) {
-          std::cout << " and new value is " << max[updated_objective];
+          std::cout << " and max[" << updated_objective << "] is " << max[updated_objective];
         } else {
-          std::cout << " and new value is " << min[updated_objective];
+          std::cout << " and min[" << updated_objective << "] is " << min[updated_objective];
         }
         std::cout << std::endl;
         //<< lv->num_running_threads << "still running.";
         debug_mutex.unlock();
 #endif
         bool wait = false;
-        Locking_Vars *lv = t->locks[updated_objective];
+        Locking_Vars *lv = nullptr;
+        if (t->locks)
+          lv = t->locks[updated_objective];
         if ( lv != nullptr ) {
-          std::cout << "Found locking var" << std::endl;
           std::unique_lock<std::mutex> lk(lv->status_mutex);
           if ( lv->num_running_threads > 1) {
+            lv->num_running_threads--; // This thread is no longer running.
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done, ";
-            std::cout << " not last in." << std::endl;
+            std::cout << lv->num_running_threads << " threads still going." << std::endl;
             debug_mutex.unlock();
 #endif
-            lv->num_running_threads--; // This thread is no longer running.
-            if (t->share_to[updated_objective] != nullptr) {
+            if (t->share_bounds[updated_objective] != nullptr) {
               if (sense == MIN) {
-                if (*t->share_to[updated_objective] > max[updated_objective]) {
-                  *t->share_to[updated_objective] = max[updated_objective];
+                if (*t->share_bounds[updated_objective] < max[updated_objective]) {
+                  *t->share_bounds[updated_objective] = max[updated_objective];
                 }
               } else {
-                if (*t->share_to[updated_objective] < min[updated_objective]) {
-                  *t->share_to[updated_objective] = min[updated_objective];
+                if (*t->share_bounds[updated_objective] > min[updated_objective]) {
+                  *t->share_bounds[updated_objective] = min[updated_objective];
                 }
               }
             }
@@ -1040,218 +1064,63 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
                 }
               }
             }
-            lv->num_running_threads++; // This thread is starting up again.
-            /* From each feasible result that our partner calculated, we can
-            * "make up" an IP problem which would have that result as it's
-            * solution. Since we know that the list from our partner, combined
-            * with our own results, is the complete list of solutions, this is
-            * doable. */
-//            if (!my_feasibles->empty()) {
-//              double *lp = new double[p.objcnt];
-//              for( int i = 2; i < p.objcnt; ++i) {
-//                lp[perm[i]] = rhs[perm[i]];
-//              }
-//              lp[perm[0]] = global_limits[perm[0]];
-//              int *res = my_feasibles->front();
-//              my_feasibles->pop_front();
-//              if (sense == MIN) {
-//                lp[perm[1]] = res[perm[1]] - 1;
-//              } else {
-//                lp[perm[1]] = res[perm[1]] + 1;
-//              }
-//#ifdef DEBUG
-//              debug_mutex.lock();
-//              std::cout << "Thread " << t->id << " adding relaxation ";
-//              for (int j = 0; j < p.objcnt; ++j) {
-//                if (lp[j] > 1e19)
-//                  std::cout << "+∞,";
-//                else if (lp[j] < -1e19)
-//                  std::cout << "-∞,";
-//                else
-//                  std::cout << lp[j] << ",";
-//              }
-//              std::cout << " with result infeasible";
-//              std::cout << std::endl;
-//              debug_mutex.unlock();
-//#endif
-//              s.insert(lp, res, true);
-//              int *last = res;
-//              while (! my_feasibles->empty()) {
-//                res = my_feasibles->front();
-//                my_feasibles->pop_front();
-//                if (sense == MIN) {
-//                  lp[perm[1]] = res[perm[1]] - 1;
-//                } else {
-//                  lp[perm[1]] = res[perm[1]] + 1;
-//                }
-//#ifdef DEBUG
-//                debug_mutex.lock();
-//                std::cout << "Thread " << t->id << " adding relaxation ";
-//                for (int j = 0; j < p.objcnt; ++j) {
-//                  if (lp[j] > 1e19)
-//                    std::cout << "+∞,";
-//                  else if (lp[j] < -1e19)
-//                    std::cout << "-∞,";
-//                  else
-//                    std::cout << lp[j] << ",";
-//                }
-//                std::cout << " with result ";
-//                for (int j = 0; j < p.objcnt; ++j) {
-//                  if (last[j] > 1e19)
-//                    std::cout << "+∞,";
-//                  else if (last[j] < -1e19)
-//                    std::cout << "-∞,";
-//                  else
-//                    std::cout << last[j] << ",";
-//                }
-//                std::cout << std::endl;
-//                debug_mutex.unlock();
-//#endif
-//                s.insert(lp, last, false);
-//                delete[] last;
-//                last = res;
-//              }
-//              delete[] last;
-//              delete[] lp;
-//            }
           } else { // (lv->num_running_threads == 1) Should be guaranteed?
             // This thread is last.
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done, ";
             std::cout << " last in." << std::endl;
-            std::cout << "max is " << max[updated_objective] << std::endl;
-            if (t->share_to[updated_objective] != nullptr)
-              std::cout << "share_to is " << *t->share_to[updated_objective] << std::endl;
             debug_mutex.unlock();
 #endif
-            if (t->share_to[updated_objective] != nullptr) {
+            if (t->share_bounds[updated_objective] != nullptr) {
               if (sense == MIN) {
-                if (*t->share_to[updated_objective] < max[updated_objective]) {
-                  *t->share_to[updated_objective] = max[updated_objective];
+                if (*t->share_bounds[updated_objective] < max[updated_objective]) {
+                  *t->share_bounds[updated_objective] = max[updated_objective];
                 } else {
-                  max[updated_objective] = *t->share_to[updated_objective];
+                  max[updated_objective] = *t->share_bounds[updated_objective];
                 }
+                *t->share_to[updated_objective] = max[updated_objective];
+                *t->share_bounds[updated_objective] = (int)-CPX_INFBOUND;
               } else {
-                if (*t->share_to[updated_objective] > min[updated_objective]) {
-                  *t->share_to[updated_objective] = min[updated_objective];
+                if (*t->share_bounds[updated_objective] > min[updated_objective]) {
+                  *t->share_bounds[updated_objective] = min[updated_objective];
                 } else {
-                  min[updated_objective] = *t->share_to[updated_objective];
+                  min[updated_objective] = *t->share_bounds[updated_objective];
                 }
+                *t->share_to[updated_objective] = min[updated_objective];
+                *t->share_bounds[updated_objective] = (int)CPX_INFBOUND;
               }
             }
+            // Update shared_limits for updated_objective, and anything
+            // "higher"
+            for (int higher = infcnt + 2; higher < p.objcnt; ++higher) {
+              int higher_obj = t->perm(higher);
+              int * limit = t->share_limit[higher_obj];
+              if ((limit != nullptr) && (t->share_from[higher_obj] != nullptr)) {
+                *limit = *t->share_from[higher_obj];
+#ifdef DEBUG
+                debug_mutex.lock();
+                std::cout << "Thread " << t->id << " ";
+                std::cout << "set limit[" << higher_obj << "] to ";
+                std::cout << *limit << std::endl;
+                debug_mutex.unlock();
+#endif
+
+              }
+            }
+            lv->reset_num_running_threads(); // These threads are starting up again.
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << ", ";
+            std::cout << "max is " << max[updated_objective] << ", ";
+            if (t->share_bounds[updated_objective] != nullptr)
+              std::cout << "share_to is " << *t->share_to[updated_objective] << ", ";
+            std::cout << lv->num_running_threads << " threads going." << std::endl;
+            debug_mutex.unlock();
+#endif
             lv->cv.notify_all();
-            /* From each feasible result that our partner calculated, we can
-            * "make up" an IP problem which would have that result as it's
-            * solution. Since we know that the list from our partner, combined
-            * with our own results, is the complete list of solutions, this is
-            * doable. */
-//            if (! my_feasibles->empty()) {
-//              double *lp = new double[p.objcnt];
-//              for( int i = 2; i < p.objcnt; ++i) {
-//                lp[perm[i]] = rhs[perm[i]];
-//              }
-//              lp[perm[0]] = global_limits[perm[0]];
-//              int *res = my_feasibles->front();
-//              my_feasibles->pop_front();
-//              if (sense == MIN) {
-//                lp[perm[1]] = res[perm[1]] - 1;
-//              } else {
-//                lp[perm[1]] = res[perm[1]] + 1;
-//              }
-//#ifdef DEBUG
-//              debug_mutex.lock();
-//              std::cout << "Thread " << t->id << " adding relaxation ";
-//              for (int j = 0; j < p.objcnt; ++j) {
-//                if (lp[j] > 1e19)
-//                  std::cout << "+∞,";
-//                else if (lp[j] < -1e19)
-//                  std::cout << "-∞,";
-//                else
-//                  std::cout << lp[j] << ",";
-//              }
-//              std::cout << " with result infeasible";
-//              std::cout << std::endl;
-//              debug_mutex.unlock();
-//#endif
-//              s.insert(lp, res, true);
-//              int *last = res;
-//              while (! my_feasibles->empty()) {
-//                res = my_feasibles->front();
-//                my_feasibles->pop_front();
-//                if (sense == MIN) {
-//                  lp[perm[1]] = res[perm[1]] - 1;
-//                } else {
-//                  lp[perm[1]] = res[perm[1]] + 1;
-//                }
-//#ifdef DEBUG
-//                debug_mutex.lock();
-//                std::cout << "Thread " << t->id << " adding relaxation ";
-//                for (int j = 0; j < p.objcnt; ++j) {
-//                  if (lp[j] > 1e19)
-//                    std::cout << "+∞,";
-//                  else if (lp[j] < -1e19)
-//                    std::cout << "-∞,";
-//                  else
-//                    std::cout << lp[j] << ",";
-//                }
-//                std::cout << " with result ";
-//                for (int j = 0; j < p.objcnt; ++j) {
-//                  if (last[j] > 1e19)
-//                    std::cout << "+∞,";
-//                  else if (last[j] < -1e19)
-//                    std::cout << "-∞,";
-//                  else
-//                    std::cout << last[j] << ",";
-//                }
-//                std::cout << std::endl;
-//                debug_mutex.unlock();
-//#endif
-//                s.insert(lp, last, false);
-//                delete[] last;
-//                last = res;
-//              }
-//              delete[] last;
-//              delete[] lp;
-//            }
-
-            /* We do modify partner_limit here, which normally we wouldn't do.
-            * However, we need to know that partner_limit is reset before this
-            * thread continues, and as there is no more waits, this is the
-            * easiest way of achieving this. Note that we reset limits before
-            * notifying the other thread, so the other thread will not start the
-            * next run until limits are reset too. */
-
-            // Note the typecasting to avoid the deleted copy constructor.
-//            my_limit = (double)global_limits[perm[0]];
-//            partner_limit = (double)global_limits[perm[1]];
           }
         }
-//        if (wait) {
-//          // Make sure that the second thread has finished its tasks.
-//          // Note that we have to wait for this as otherwise we might notify
-//          // the second thread before it is ready to be notified (causing 2nd
-//          // thread to get stuck forever).
-//          {
-//            std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
-//          }
-//          // Tell second thread to run.
-//          lv->ready_cv.notify_all();
-//        } else {
-//          std::unique_lock<std::mutex> ready_lk(lv->ready_mutex);
-//          // Notify first thread to keep going
-//          lv->cv.notify_all();
-//#ifdef FINETIMING
-//          clock_gettime(CLOCK_MONOTONIC, &start);
-//          double start_wait = start.tv_sec + start.tv_nsec/1e9;
-//#endif
-//          // Wait for first thread to be ready
-//          lv->ready_cv.wait(ready_lk);
-//#ifdef FINETIMING
-//          clock_gettime(CLOCK_MONOTONIC, &start);
-//          wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
-//#endif
-//        }
       }
 
       if ((p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
@@ -1275,7 +1144,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           *t->share_to[t->perm(p.objcnt-1)] = min[t->perm(p.objcnt-1)];
         }
       }
-      if (infcnt == objective_counter-1) {
+      if (infeasible && (infcnt == objective_counter-1)) {
         if ((p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
           if (t->share_to[t->perm(p.objcnt-1)] != nullptr) {
             if (sense == MIN) {
@@ -1287,20 +1156,20 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
         /* Set all constraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-//          if ((!sharing) || (t->share_from[j] == nullptr)) {
+          if ((!sharing) || (t->share_limit[j] == nullptr)) {
             if (sense == MIN)
               rhs[j] = CPX_INFBOUND;
             else
               rhs[j] = -CPX_INFBOUND;
-//          } else {
-//#ifdef DEBUG
-//            debug_mutex.lock();
-//            std::cout << "Thread " << t->id << " setting rhs[" << j;
-//            std::cout << "] to " << *t->share_from[j] << std::endl;
-//            debug_mutex.unlock();
-//#endif
-//            rhs[j] = *t->share_from[j];
-//          }
+          } else {
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " setting rhs[" << j;
+            std::cout << "] to " << *t->share_limit[j] << std::endl;
+            debug_mutex.unlock();
+#endif
+            rhs[j] = *t->share_limit[j];
+          }
         }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
@@ -1356,9 +1225,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     }
   }
   for(int i = 0; i < p.objcnt; ++i) {
-    Locking_Vars *lv = t->locks[i];
+    Locking_Vars *lv = nullptr;
+    if (t->locks)
+      lv = t->locks[i];
     if (lv != nullptr) {
       lv->num_running_threads--;
+      // TODO reduce max_running_threads
     }
   }
 #ifdef FINETIMING

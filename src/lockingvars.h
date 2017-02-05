@@ -16,9 +16,28 @@ class Locking_Vars {
     std::mutex ready_mutex;
     std::atomic<int> num_running_threads;
     std::condition_variable cv;
-    std::condition_variable ready_cv;
+    std::condition_variable rv;
+    bool any_found;
 
     Locking_Vars(int num_running_threads_);
+    void reset_num_running_threads();
+    int max_threads() const;
+  private:
+    int max_running_threads;
 };
+
+inline void Locking_Vars::reset_num_running_threads() {
+  num_running_threads = max_running_threads;
+}
+
+inline int Locking_Vars::max_threads() const {
+  return max_running_threads;
+}
+
+inline Locking_Vars::Locking_Vars(int num_running_threads_) :
+    num_running_threads(num_running_threads_), any_found(false),
+    max_running_threads(num_running_threads_) {
+}
+
 
 #endif /* LOCKINGVARS_H */

@@ -81,7 +81,6 @@ const Result * Solutions::find(const double *ip, const Sense sense) const {
 }
 void Solutions::insert(const double *lp, const int *result,
     const bool infeasible) {
-  std::unique_lock<std::mutex> lk(mutex);
   Result * r = new Result;
   r->objective_count = objective_count;
   r->ip = new double[objective_count];

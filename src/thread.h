@@ -9,6 +9,8 @@ class Thread {
     int perm(int) const;
     int ** share_to;
     int ** share_from;
+    int ** share_bounds;
+    int ** share_limit;
     Locking_Vars ** locks;
 
     double split_start;
@@ -16,7 +18,8 @@ class Thread {
 
 
     Thread(int id_, int nObj, const int * perm_, int ** share_to_,
-        int ** share_from_, Locking_Vars ** locks_);
+        int ** share_from_, int ** share_bounds_, int ** share_limit_, 
+        Locking_Vars ** locks_);
     Thread(int id_, int nObj, double split_start_, double split_stop_);
 
   private:
