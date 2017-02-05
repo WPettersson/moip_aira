@@ -1069,7 +1069,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done, ";
-            std::cout << " last in." << std::endl;
+            std::cout << "last in." << std::endl;
             debug_mutex.unlock();
 #endif
             if (t->share_bounds[updated_objective] != nullptr) {
@@ -1093,7 +1093,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             }
             // Update shared_limits for updated_objective, and anything
             // "higher"
-            for (int higher = infcnt + 2; higher < p.objcnt; ++higher) {
+            for (int higher = infcnt; higher < p.objcnt; ++higher) {
               int higher_obj = t->perm(higher);
               int * limit = t->share_limit[higher_obj];
               if ((limit != nullptr) && (t->share_from[higher_obj] != nullptr)) {
@@ -1174,6 +1174,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting rhs[" << objective << "] to " << max[objective]-1 <<std::endl;
+          debug_mutex.unlock();
+#endif
         if (sense == MIN) {
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
