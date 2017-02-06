@@ -39,6 +39,14 @@ int cplex_threads;
 bool split;
 
 /**
+ * Has a thread completed its search. If one thread is finished, it will have
+ * synchronised along the way, and therefore it (and possibly its
+ * cluster-friends) will have the complete list of solutions. That is, if
+ * completed is true, then the search may exit.
+ */
+bool completed;
+
+/**
  * Track how many individual IPs we solve.
  */
 std::atomic<int> ipcount;
@@ -263,12 +271,7 @@ int main (int argc, char *argv[])
 
   Solutions all(p.objcnt);
 
-  std::atomic<double> *global_limits = new std::atomic<double>[p.objcnt];
-
-  double lim = (p.objsen == MIN) ? CPX_INFBOUND : -CPX_INFBOUND;
-  for (int i = 0; i < p.objcnt; ++i) {
-    global_limits[i] = lim;
-  }
+  completed = false;
 
   std::list<Locking_Vars*> locking_var_list;
   double start_point, stop_point;
@@ -1022,7 +1025,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         Locking_Vars *lv = nullptr;
         if (t->locks)
           lv = t->locks[updated_objective];
-        if ( lv != nullptr ) {
+        if ( lv != nullptr) {
           std::unique_lock<std::mutex> lk(lv->status_mutex);
           if ( lv->num_running_threads > 1) {
             lv->num_running_threads--; // This thread is no longer running.
@@ -1048,7 +1051,8 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
-            lv->cv.wait(lk); // Wait for all other threads to update limits.
+            if (!completed)
+              lv->cv.wait(lk); // Wait for all other threads to update limits.
 #ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
@@ -1230,13 +1234,13 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       }
     }
   }
+  completed = true;
   for(int i = 0; i < p.objcnt; ++i) {
     Locking_Vars *lv = nullptr;
     if (t->locks)
       lv = t->locks[i];
     if (lv != nullptr) {
-      lv->num_running_threads--;
-      // TODO reduce max_running_threads
+      lv->cv.notify_all();
     }
   }
 #ifdef FINETIMING

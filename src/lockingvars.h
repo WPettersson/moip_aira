@@ -17,7 +17,8 @@ class Locking_Vars {
     std::atomic<int> num_running_threads;
     std::condition_variable cv;
     std::condition_variable rv;
-    bool any_found;
+    std::atomic<bool> changed;
+
 
     Locking_Vars(int num_running_threads_);
     void reset_num_running_threads();
@@ -35,7 +36,7 @@ inline int Locking_Vars::max_threads() const {
 }
 
 inline Locking_Vars::Locking_Vars(int num_running_threads_) :
-    num_running_threads(num_running_threads_), any_found(false),
+    num_running_threads(num_running_threads_), changed(false),
     max_running_threads(num_running_threads_) {
 }
 
