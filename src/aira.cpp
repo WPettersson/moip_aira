@@ -947,21 +947,47 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       if (sharing && !infeasible && (t->share_from[t->perm(0)] != nullptr)) {
         if (sense == MIN) {
           if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
+            // Check if our partner found something.
+            if (t->locks) {
+              int obj = t->perm(infcnt+1);
+              Locking_Vars *lv = t->locks[obj];
+              if (lv != nullptr) {
+                if (lv->found_any) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "partner found something." << std::endl;
+          debug_mutex.unlock();
+#endif
+                  // Partner found something
+                  infcnt = 0;
+                  inflast = true;
+                  depth_level = 1;
+                  depth = t->perm(depth_level);
+                }
+              }
+            }
             // Pretend infeasible to backtrack properly
             infeasible = true;
-            // Note that the partner found something, so reset infcnt and
-            // inflast
-            infcnt = 0;
-            inflast = false;
           }
         } else {
           if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
+            // Check if our partner found something.
+            if (t->locks) {
+              int obj = t->perm(infcnt+1);
+              Locking_Vars *lv = t->locks[obj];
+              if (lv != nullptr) {
+                if (lv->found_any) {
+                  // Partner found something
+                  infcnt = 0;
+                  inflast = true;
+                  depth_level = 1;
+                  depth = t->perm(depth_level);
+                }
+              }
+            }
             // Pretend infeasible to backtrack properly
             infeasible = true;
-            // Note that the partner found something, so reset infcnt and
-            // inflast
-            infcnt = 0;
-            inflast = false;
           }
         }
         // Duplicate code as we are marking this result infeasible
@@ -979,6 +1005,13 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
       }
       if (!infeasible) {
+        if (t->locks) {
+          int obj = t->perm(infcnt+1);
+          Locking_Vars *lv = t->locks[obj];
+          if (lv != nullptr) {
+            lv->found_any = true;
+          }
+        }
         infcnt = 0;
         inflast = false;
         /* Update maxima */
@@ -1094,6 +1127,8 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
                 *t->share_bounds[updated_objective] = (int)CPX_INFBOUND;
               }
             }
+            // Reset value of found_any for next time we visit this level.
+            lv->found_any = false;
             // Update shared_limits for updated_objective, and anything
             // "higher"
             for (int higher = infcnt; higher < p.objcnt; ++higher) {

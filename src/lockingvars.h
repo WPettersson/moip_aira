@@ -18,6 +18,7 @@ class Locking_Vars {
     std::condition_variable cv;
     std::condition_variable rv;
     std::atomic<bool> changed;
+    std::atomic<bool> found_any;
 
 
     Locking_Vars(int num_running_threads_);
