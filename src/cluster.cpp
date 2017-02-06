@@ -115,13 +115,19 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
         locks[pos] = new Locking_Vars(perCluster + 1);
         int * old_share_to = share_to[pos];
         int * old_share_bounds = share_bounds[pos];
+        int * old_share_limit = share_limit[pos];
+        int ** old_from = new int*[nObjLeft];
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          old_from[obj] = share_from[obj];
+        }
         for(int j = 0; j < nObjLeft; ++j) {
           int obj = nObj - objLeft[j] - 1;
           if (obj == pos) {
             share_to[obj] = new_shares[obj];
             share_bounds[obj] = new_bounds[obj];
-          } else {
             share_limit[obj] = new_limit[obj];
+          } else {
             share_from[obj] = new_shares[obj];
           }
         }
@@ -129,6 +135,11 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
             ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
         share_to[pos] = old_share_to;
         share_bounds[pos] = old_share_bounds;
+        share_limit[pos] = old_share_limit;
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          share_from[obj] = old_from[obj];
+        }
       }
       if (perCluster > 0) {
         for( ; i < nObjLeft ; ++i) {
@@ -136,21 +147,32 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           int pos = nObj - objLeft[i] - 1;
           int * old_share_to = share_to[pos];
           int * old_share_bounds = share_bounds[pos];
+          int * old_share_limit = share_limit[pos];
           locks[pos] = new Locking_Vars(perCluster);
-          for(int j = 0; j < nObj; ++j) {
+          int ** old_from = new int*[nObjLeft];
+          for(int j = 0; j < nObjLeft; ++j) {
+            int obj = nObj - objLeft[j] - 1;
+            old_from[obj] = share_from[obj];
+          }
+          for(int j = 0; j < nObjLeft; ++j) {
             int obj = nObj - objLeft[j] - 1;
             if (obj == pos) {
               share_to[obj] = new_shares[obj];
               share_bounds[obj] = new_bounds[obj];
+              share_limit[obj] = new_limit[obj];
             } else {
               share_from[obj] = new_shares[obj];
-              share_limit[obj] = new_limit[obj];
             }
           }
           Cluster(perCluster, nObj, sense, spread_threads, nObjLeft - 1,
               ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
           share_to[pos] = old_share_to;
           share_bounds[pos] = old_share_bounds;
+          share_limit[pos] = old_share_limit;
+          for(int j = 0; j < nObjLeft; ++j) {
+            int obj = nObj - objLeft[j] - 1;
+            share_from[obj] = old_from[obj];
+          }
         }
       }
     } else { // grouping threads "near" each other
@@ -163,15 +185,20 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
         locks[pos] = new Locking_Vars(threads_to_use);
         int * old_share_to = share_to[pos];
         int * old_share_bounds = share_bounds[pos];
+        int * old_share_limit = share_limit[pos];
+        int ** old_from = new int*[nObjLeft];
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          old_from[obj] = share_from[obj];
+        }
         for(int j = 0; j < nObjLeft; ++j) {
           int obj = nObj - objLeft[j] - 1;
           if (obj == pos) {
             share_to[obj] = new_shares[obj];
             share_bounds[pos] = new_bounds[obj];
-            share_limit[obj] = nullptr;
+            share_limit[obj] = new_limit[obj];
           } else {
             share_from[obj] = new_shares[obj];
-            share_limit[obj] = new_limit[obj];
           }
         }
         Cluster(threads_to_use, nObj, sense, spread_threads, nObjLeft - 1,
@@ -179,7 +206,11 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
         threads_remaining -= threads_to_use;
         share_to[pos] = old_share_to;
         share_bounds[pos] = old_share_bounds;
-        // Need to reset share_limits ?
+        share_limit[pos] = old_share_limit;
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          share_from[obj] = old_from[obj];
+        }
         ++i;
       }
     }

@@ -1160,19 +1160,24 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
         /* Set all constraints back to infinity */
         for (int j = 0; j < p.objcnt; j++) {
-          if ((!sharing) || (t->share_limit[j] == nullptr)) {
+          if ((!sharing) || (t->share_limit[j] == nullptr && t->share_from[j] == nullptr)) {
             if (sense == MIN)
               rhs[j] = CPX_INFBOUND;
             else
               rhs[j] = -CPX_INFBOUND;
           } else {
+            int * share_from;
+            if (t->share_limit[j] == nullptr)
+              share_from = t->share_from[j];
+            else
+              share_from = t->share_limit[j];
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " setting rhs[" << j;
-            std::cout << "] to " << *t->share_limit[j] << std::endl;
+            std::cout << "] to " << *share_from << std::endl;
             debug_mutex.unlock();
 #endif
-            rhs[j] = *t->share_limit[j];
+            rhs[j] = *share_from;
           }
         }
         /* In the case of a minimisation problem
