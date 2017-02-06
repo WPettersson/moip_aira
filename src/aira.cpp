@@ -876,7 +876,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
         std::cout << std::endl;
       }
-      if (sharing && !infeasible && (num_threads > 1) && (infcnt == 0)) {
+      if (sharing && !infeasible && (num_threads > 1)) {
         if (t->share_from[t->perm(0)] != nullptr) {
           if (sense == MIN) {
             if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
@@ -944,8 +944,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
       }
 
-      if (sharing && !infeasible && (t->share_from[t->perm(0)] != nullptr)
-          && (infcnt == 0)) {
+      if (sharing && !infeasible && (t->share_from[t->perm(0)] != nullptr)) {
         if (sense == MIN) {
           if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
             // Pretend infeasible to backtrack properly
