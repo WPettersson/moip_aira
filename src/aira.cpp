@@ -927,7 +927,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 //          }
 //          partner_feasibles->push_back(objectives);
 //        }
-
         // Note that perm[1] is only shared with one other thread, that only
         // ever reads it, and that this thread always improves the value of
         // this shared limit, so we can use this faster update.
@@ -1129,22 +1128,17 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             }
             // Reset value of found_any for next time we visit this level.
             lv->found_any = false;
-            // Update shared_limits for updated_objective, and anything
-            // "higher"
-            for (int higher = infcnt; higher < p.objcnt; ++higher) {
-              int higher_obj = t->perm(higher);
-              int * limit = t->share_limit[higher_obj];
-              if ((limit != nullptr) && (t->share_from[higher_obj] != nullptr)) {
-                *limit = *t->share_from[higher_obj];
+            // Update shared_limits for updated_objective
+            int * limit = t->share_limit[updated_objective];
+            if ((limit != nullptr) && (t->share_from[updated_objective] != nullptr)) {
+              *limit = *t->share_from[updated_objective];
 #ifdef DEBUG
-                debug_mutex.lock();
-                std::cout << "Thread " << t->id << " ";
-                std::cout << "set limit[" << higher_obj << "] to ";
-                std::cout << *limit << std::endl;
-                debug_mutex.unlock();
+              debug_mutex.lock();
+              std::cout << "Thread " << t->id << " ";
+              std::cout << "set limit[" << updated_objective << "] to ";
+              std::cout << *limit << std::endl;
+              debug_mutex.unlock();
 #endif
-
-              }
             }
             lv->reset_num_running_threads(); // These threads are starting up again.
 #ifdef DEBUG

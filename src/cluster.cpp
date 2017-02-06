@@ -135,7 +135,8 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
             ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
         share_to[pos] = old_share_to;
         share_bounds[pos] = old_share_bounds;
-        share_limit[pos] = old_share_limit;
+        if (perCluster > 0)
+          share_limit[pos] = old_share_limit;
         for(int j = 0; j < nObjLeft; ++j) {
           int obj = nObj - objLeft[j] - 1;
           share_from[obj] = old_from[obj];
@@ -159,7 +160,8 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
             if (obj == pos) {
               share_to[obj] = new_shares[obj];
               share_bounds[obj] = new_bounds[obj];
-              share_limit[obj] = new_limit[obj];
+              if (perCluster > 1)
+                share_limit[obj] = new_limit[obj];
             } else {
               share_from[obj] = new_shares[obj];
             }
@@ -196,7 +198,8 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           if (obj == pos) {
             share_to[obj] = new_shares[obj];
             share_bounds[pos] = new_bounds[obj];
-            share_limit[obj] = new_limit[obj];
+            if (threads_to_use > 1)
+              share_limit[obj] = new_limit[obj];
           } else {
             share_from[obj] = new_shares[obj];
           }
