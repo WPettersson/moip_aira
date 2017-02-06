@@ -38,7 +38,7 @@ inline int Locking_Vars::max_threads() const {
 
 inline Locking_Vars::Locking_Vars(int num_running_threads_) :
     num_running_threads(num_running_threads_), changed(false),
-    max_running_threads(num_running_threads_) {
+    found_any(false), max_running_threads(num_running_threads_) {
 }
 
 

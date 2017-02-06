@@ -1160,23 +1160,41 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             lv->cv.notify_all();
           }
         }
-        if (lv != nullptr) {
+        if (!completed && lv != nullptr) {
           for(int i = 0; i <= infcnt; ++i) {
             if (sense == MIN) {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
-          std::cout << "setting max[" << t->perm(i) << " to -inf" << std::endl;
+          std::cout << "setting max[" << t->perm(i) << "] to -inf" << std::endl;
           debug_mutex.unlock();
 #endif
               max[t->perm(i)] = (int)-CPX_INFBOUND;
               if (t->share_to[t->perm(i)] != nullptr) {
-                *t->share_to[t->perm(i)] = (int)-CPX_INFBOUND;
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting share_to[" << t->perm(i) << "] to inf" << std::endl;
+          debug_mutex.unlock();
+#endif
+                *t->share_to[t->perm(i)] = (int)CPX_INFBOUND;
+              }
+              if (t->share_limit[t->perm(i)] != nullptr) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting limit_to[" << t->perm(i) << "] to inf" << std::endl;
+          debug_mutex.unlock();
+#endif
+                *t->share_limit[t->perm(i)] = (int)CPX_INFBOUND;
               }
             } else {
               min[t->perm(i)] = (int)CPX_INFBOUND;
               if (t->share_to[t->perm(i)] != nullptr) {
-                *t->share_to[t->perm(i)] = (int)CPX_INFBOUND;
+                *t->share_to[t->perm(i)] = (int)-CPX_INFBOUND;
+              }
+              if (t->share_limit[t->perm(i)] != nullptr) {
+                *t->share_limit[t->perm(i)] = (int)-CPX_INFBOUND;
               }
             }
           }
@@ -1198,27 +1216,69 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               int obj = t->perm(i);
               if (sense == MIN) {
                 if (t->share_from[obj] != nullptr) {
-                  if (max[obj] < *t->share_from[obj]) {
-                    max[obj] = *t->share_from[obj];
+//                  if (max[obj] < *t->share_from[obj]) {
+//                    max[obj] = *t->share_from[obj];
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
-          std::cout << "setting max[" << obj << " to " << max[obj] << std::endl;
+          std::cout << " share_from[" << obj << "] is " << *t->share_from[obj] << std::endl;
           debug_mutex.unlock();
 #endif
-                    lv->changed = true;
-                    if (t->share_to[obj] != nullptr) {
-                      *t->share_to[obj] = max[obj];
+                  if (t->share_limit[obj] != nullptr) {
+                    if (*t->share_limit[obj] > *t->share_from[obj]) {
+                      lv->changed = true;
+                      *t->share_limit[obj] = *t->share_from[obj];
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting share_limit[" << obj << "] to " << max[obj] << std::endl;
+          debug_mutex.unlock();
+#endif
+                    }
+                  }
+                  if (t->share_to[obj] != nullptr) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << " share_to[" << obj << "] is " << *t->share_to[obj] << std::endl;
+          debug_mutex.unlock();
+#endif
+                    if (*t->share_to[obj] > *t->share_from[obj]) {
+                      lv->changed = true;
+                      *t->share_to[obj] = *t->share_from[obj];
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting share_to[" << obj << "] to " << max[obj] << std::endl;
+          debug_mutex.unlock();
+#endif
                     }
                   }
                 }
               } else {
                 if (t->share_from[obj] != nullptr) {
-                  if (min[obj] > *t->share_from[obj]) {
-                    min[obj] = *t->share_from[obj];
-                    lv->changed = true;
-                    if (t->share_to[obj] != nullptr) {
-                      *t->share_to[obj] = min[obj];
+                  if (t->share_limit[obj] != nullptr) {
+                    if (*t->share_limit[obj] < *t->share_from[obj]) {
+                      lv->changed = true;
+                      *t->share_limit[obj] = *t->share_from[obj];
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting share_limit[" << obj << "] to " << max[obj] << std::endl;
+          debug_mutex.unlock();
+#endif
+                    }
+                  }
+                  if (t->share_to[obj] != nullptr) {
+                    if (*t->share_to[obj] < *t->share_from[obj]) {
+                      lv->changed = true;
+                      *t->share_to[obj] = *t->share_from[obj];
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "setting share_to[" << obj << "] to " << max[obj] << std::endl;
+          debug_mutex.unlock();
+#endif
                     }
                   }
                 }
@@ -1231,15 +1291,38 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
                 lv->cv.wait(lk);
               } else {
                 // Last in
-                lv->changed = false;
                 lv->reset_num_running_threads();
                 lk.unlock();
                 lv->cv.notify_all();
               }
             }
           } while(lv->changed);
+#ifdef DEBUG
+          debug_mutex.lock();
+          for (int i=0; i < p.objcnt; ++i) {
+            std::cout << "Thread " << t->id << " ";
+            std::cout << "max[" << i << "] is " << max[i] << std::endl;
+          }
+          for (int i=0; i < p.objcnt; ++i) {
+            if (t->share_from[i]) {
+              std::cout << "Thread " << t->id << " ";
+              std::cout << "share_from[" << i << "] is " << *t->share_from[i] << std::endl;
+            }
+          }
+          for (int i=0; i < p.objcnt; ++i) {
+            if (t->share_limit[i]) {
+              std::cout << "Thread " << t->id << " ";
+              std::cout << "share_limit[" << i << "] is " << *t->share_limit[i] << std::endl;
+            }
+          }
+          int obj = t->perm(infcnt+1);
+          if (t->locks && t->locks[obj] && t->locks[obj]->found_any)
+            std::cout << "Thread " << t->id << " found_any is true" << std::endl;
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "synced." << std::endl;
+          debug_mutex.unlock();
+#endif
         }
-        // here
       }
 
       if ((p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
@@ -1274,8 +1357,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           }
         }
         /* Set all constraints back to infinity */
-        for (int j = 0; j < p.objcnt; j++) {
-          if ((!sharing) || (t->share_limit[j] == nullptr && t->share_from[j] == nullptr)) {
+        for (int pre_j = 0; pre_j < p.objcnt; pre_j++) {
+          int j  = t->perm(pre_j);
+          if ((pre_j < infcnt) || (!sharing) || (t->share_limit[j] == nullptr && t->share_from[j] == nullptr)) {
             if (sense == MIN)
               rhs[j] = CPX_INFBOUND;
             else
@@ -1289,10 +1373,27 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " setting rhs[" << j;
-            std::cout << "] to " << *share_from << std::endl;
+            std::cout << "] to " << (*share_from - 1) << std::endl;
             debug_mutex.unlock();
 #endif
-            rhs[j] = *share_from;
+            rhs[j] = *share_from - 1;
+            if (t->share_to[j] != nullptr) {
+              if (sense == MIN) {
+                if (*t->share_to[j] > *share_from) {
+                  *t->share_to[j] = *share_from;
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " setting share_to[" << j;
+            std::cout << "] to " << *t->share_to[j] << std::endl;
+            debug_mutex.unlock();
+#endif
+                }
+              } else {
+                if (*t->share_to[j] < *share_from) {
+                  *t->share_to[j] = *share_from;
+                }
+              }
+            }
           }
         }
         /* In the case of a minimisation problem
@@ -1317,10 +1418,32 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         depth = t->perm(depth_level);
         onwalk = false;
       } else if (inflast && infcnt != objective_counter) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "increasing depth from " << depth_level << std::endl;
+          debug_mutex.unlock();
+#endif
         if (sense == MIN) {
-          rhs[depth] = CPX_INFBOUND;
+          int * share_from = nullptr;
+          if (t->share_limit[depth] != nullptr)
+            share_from = t->share_limit[depth];
+          else if (t->share_from[depth] != nullptr)
+            share_from = t->share_from[depth];
+          if (share_from != nullptr)
+            rhs[depth] = *share_from - 1;
+          else
+            rhs[depth] = CPX_INFBOUND;
         } else {
-          rhs[depth] = -CPX_INFBOUND;
+          int * share_from = nullptr;
+          if (t->share_limit[depth] != nullptr)
+            share_from = t->share_limit[depth];
+          else if (t->share_from[depth] != nullptr)
+            share_from = t->share_from[depth];
+          if (share_from != nullptr)
+            rhs[depth] = *share_from + 1;
+          else
+            rhs[depth] = -CPX_INFBOUND;
         }
         depth_level++;
         depth = t->perm(depth_level);
@@ -1355,6 +1478,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     }
   }
   completed = true;
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "done!" << std::endl;
+          debug_mutex.unlock();
+#endif
   for(int i = 0; i < p.objcnt; ++i) {
     Locking_Vars *lv = nullptr;
     if (t->locks)
