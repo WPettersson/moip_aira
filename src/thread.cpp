@@ -45,6 +45,9 @@ Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** s
   locks = new Locking_Vars* [nObj];
   for(int i = 0; i < nObj; ++i) {
     locks[i] = locks_[i];
+#ifdef DEBUG
+    std::cout << "locks[" << i << "] = " << locks[i] << std::endl;
+#endif
   }
   perm_ = new int[nObj];
   for(int i = 0; i < nObj; ++i) {

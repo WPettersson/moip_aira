@@ -821,7 +821,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 //    if (t->share_from[objective] != nullptr) {
 //      max[objective] = min[objective] = *t->share_from[objective];
 //    }
-    while (infcnt < objective_counter) {
+    while (infcnt < objective_counter && !completed) {
       bool relaxed;
       int solnstat;
       /* Look for possible relaxations to the current problem*/
@@ -1060,7 +1060,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           std::unique_lock<std::mutex> lk(lv->status_mutex);
           if ( lv->num_running_threads > 1) {
             lv->num_running_threads--; // This thread is no longer running.
-#ifdef DEBUG
+#ifdef DEBUG_SYNC
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done, ";
             std::cout << lv->num_running_threads << " threads still going." << std::endl;
@@ -1082,8 +1082,15 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
-            if (!completed)
+            if (!completed) {
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "waiting on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
               lv->cv.wait(lk); // Wait for all other threads to update limits.
+            }
 #ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
@@ -1101,7 +1108,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             }
           } else { // (lv->num_running_threads == 1) Should be guaranteed?
             // This thread is last.
-#ifdef DEBUG
+#ifdef DEBUG_SYNC
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done, ";
             std::cout << "last in." << std::endl;
@@ -1149,6 +1156,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               std::cout << "share_to is " << *t->share_to[updated_objective] << ", ";
             std::cout << lv->num_running_threads << " threads going." << std::endl;
             debug_mutex.unlock();
+#endif
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "releasing on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
 #endif
             lk.unlock();
             lv->cv.notify_all();
@@ -1199,11 +1212,23 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               if (lv->num_running_threads > 0) {
                 if (completed)
                   break;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "waiting on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
                 lv->cv.wait(lk);
               } else {
                 // Last in
                 lv->changed = false;
                 lv->reset_num_running_threads();
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "releasing on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
                 lk.unlock();
                 lv->cv.notify_all();
               }
@@ -1284,11 +1309,23 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               if (lv->num_running_threads > 0) {
                 if (completed)
                   break;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "waiting on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
                 lv->cv.wait(lk);
               } else {
                 // Last in
                 lv->reset_num_running_threads();
                 lk.unlock();
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "releasing on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
                 lv->cv.notify_all();
               }
             }
@@ -1484,6 +1521,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     if (t->locks)
       lv = t->locks[i];
     if (lv != nullptr) {
+      {
+        std::unique_lock<std::mutex> lk(lv->status_mutex);
+      }
       lv->cv.notify_all();
     }
   }
