@@ -5,6 +5,7 @@ TARGETDIR = ./build
 
 # Extra debugging flags.
 # -DDEBUG_SOLUTION_SEARCH
+# -DDEBUG_SYNC
 CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio127
 CC = gcc
 CXX = g++
