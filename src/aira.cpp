@@ -1197,6 +1197,8 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
               lv->num_running_threads--;
               if (lv->num_running_threads > 0) {
+                if (completed)
+                  break;
                 lv->cv.wait(lk);
               } else {
                 // Last in
@@ -1210,8 +1212,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               int obj = t->perm(i);
               if (sense == MIN) {
                 if (t->share_from[obj] != nullptr) {
-//                  if (max[obj] < *t->share_from[obj]) {
-//                    max[obj] = *t->share_from[obj];
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
@@ -1282,6 +1282,8 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
               lv->num_running_threads--;
               if (lv->num_running_threads > 0) {
+                if (completed)
+                  break;
                 lv->cv.wait(lk);
               } else {
                 // Last in
@@ -1309,8 +1311,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               std::cout << "share_limit[" << i << "] is " << *t->share_limit[i] << std::endl;
             }
           }
-          int obj = t->perm(infcnt+1);
-          if (t->locks && t->locks[obj] && t->locks[obj]->found_any)
+          if (lv->found_any)
             std::cout << "Thread " << t->id << " found_any is true" << std::endl;
           std::cout << "Thread " << t->id << " ";
           std::cout << "synced." << std::endl;
