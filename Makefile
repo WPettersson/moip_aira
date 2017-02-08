@@ -1,7 +1,10 @@
 SRC = ./src
 TARGETDIR = ./build
 #TARGETDIR = ./debug
-#DEBUG_FLAGS = -g -DDEBUG -DDEBUG_SOLUTION_SEARCH
+#DEBUG_FLAGS = -g -DDEBUG
+
+# Extra debugging flags.
+# -DDEBUG_SOLUTION_SEARCH
 CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio127
 CC = gcc
 CXX = g++
