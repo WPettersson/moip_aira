@@ -894,19 +894,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
         std::cout << std::endl;
       }
-      if (sharing && !infeasible && (num_threads > 1)) {
-        if (t->share_from[t->perm(0)] != nullptr) {
-          if (sense == MIN) {
-            if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
-              std::cout << "Thread " << t->id << " result found by partner, bailing." << std::endl;
-            }
-          } else {
-            if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
-              std::cout << "Thread " << t->id << " result found by partner, bailing." << std::endl;
-            }
-          }
-        }
-      }
       debug_mutex.unlock();
 #endif
       if (split) {
@@ -935,6 +922,13 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           }
         }
       } else if (sharing) {
+        std::unique_lock<std::mutex> lk(t->locks[t->perm(infcnt+1)]->status_mutex);
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << " got lock on " << t->perm(infcnt+1) << std::endl;
+          debug_mutex.unlock();
+#endif
         // Not splitting.
         /* We want to keep the actual objective vector, and share it with our
         * partner as a relaxation. */
@@ -948,108 +942,152 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         // Note that perm[1] is only shared with one other thread, that only
         // ever reads it, and that this thread always improves the value of
         // this shared limit, so we can use this faster update.
-        if (!infeasible && (p.objcnt > 1) && (infcnt == 0)) {
-//#ifdef DEBUG
-//          debug_mutex.lock();
-//          std::cout << "Thread " << t->id << " updating bound on " << t->perm(1);
-//          std::cout << " to " << rhs[t->perm(1)] << std::endl;
-//          debug_mutex.unlock();
-//#endif
+        if (!infeasible && (p.objcnt > 1)) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " updating first bound on " << t->perm(1);
+          std::cout << " to " << result[t->perm(1)] << std::endl;
+          debug_mutex.unlock();
+#endif
           if (t->share_to[t->perm(1)] != nullptr)
-            *t->share_to[t->perm(1)] = rhs[t->perm(1)];
+            *t->share_to[t->perm(1)] = result[t->perm(1)];
         //  rhs[perm[0]] = my_limit;
         }
-      }
 
-      if (sharing && !infeasible && (t->share_from[t->perm(0)] != nullptr)) {
-        if (sense == MIN) {
-          if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
-            // Check if our partner found something.
-            if (t->locks) {
-              int obj = t->perm(infcnt+1);
-              Locking_Vars *lv = t->locks[obj];
-              if (lv != nullptr) {
-                if (lv->found_any) {
+        if (!infeasible && (t->share_from[t->perm(0)] != nullptr)) {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
-          std::cout << "partner found something." << std::endl;
+          std::cout << "result on " << t->perm(0) << " is " << result[t->perm(0)] << " and ";
+          std::cout << "first bound on " << t->perm(0) << " is " << *t->share_from[t->perm(0)] <<std::endl;
           debug_mutex.unlock();
 #endif
-                  // Partner found something
-                  infcnt = 0;
-                  inflast = true;
-                  depth_level = 1;
-                  depth = t->perm(depth_level);
+          if (sense == MIN) {
+            if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " smaller result found by partner, bailing." << std::endl;
+          debug_mutex.unlock();
+#endif
+              // Check if our partner found something.
+              if (t->locks) {
+                int obj = t->perm(infcnt+1);
+                Locking_Vars *lv = t->locks[obj];
+                if (lv != nullptr) {
+                  if (lv->found_any) {
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " ";
+            std::cout << "partner found something." << std::endl;
+            debug_mutex.unlock();
+#endif
+                    // Partner found something
+                    infcnt = 0;
+                    inflast = true;
+                    depth_level = 1;
+                    depth = t->perm(depth_level);
+                  }
                 }
               }
+              // Pretend infeasible to backtrack properly
+              infeasible = true;
             }
-            // Pretend infeasible to backtrack properly
-            infeasible = true;
+          } else {
+            if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " bigger result found by partner, bailing." << std::endl;
+          debug_mutex.unlock();
+#endif
+              // Check if our partner found something.
+              if (t->locks) {
+                int obj = t->perm(infcnt+1);
+                Locking_Vars *lv = t->locks[obj];
+                if (lv != nullptr) {
+                  if (lv->found_any) {
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " ";
+            std::cout << "partner found something." << std::endl;
+            debug_mutex.unlock();
+#endif
+                    // Partner found something
+                    infcnt = 0;
+                    inflast = true;
+                    depth_level = 1;
+                    depth = t->perm(depth_level);
+                  }
+                }
+              }
+              // Pretend infeasible to backtrack properly
+              infeasible = true;
+            }
           }
+          // Duplicate code as we are marking this result infeasible
+          /* Update maxima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] > max[j]) {
+              max[j] = result[j];
+            }
+          }
+          /* Update minima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] < min[j]) {
+              min[j] = result[j];
+            }
+          }
+        }
+        if (!infeasible) {
+          if (t->locks) {
+            int obj = t->perm(infcnt+1);
+            Locking_Vars *lv = t->locks[obj];
+            if (lv != nullptr) {
+              lv->found_any = true;
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " ";
+            std::cout << "found something at infcnt=" << infcnt << std::endl;
+            debug_mutex.unlock();
+#endif
+            }
+          }
+          infcnt = 0;
+          inflast = false;
+          /* Update maxima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] > max[j]) {
+              max[j] = result[j];
+            }
+          }
+          /* Update minima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] < min[j]) {
+              min[j] = result[j];
+            }
+          }
+        }
+        if (infeasible) {
+          if (t->locks) {
+            int obj = t->perm(infcnt+1);
+            Locking_Vars *lv = t->locks[obj];
+            if (lv != nullptr) {
+              if (lv->found_any) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << "apparently partner found something" << std::endl;
+          debug_mutex.unlock();
+#endif
+                infcnt = 0;
+              }
+            }
+          }
+          infcnt++;
+          inflast = true;
         } else {
-          if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
-            // Check if our partner found something.
-            if (t->locks) {
-              int obj = t->perm(infcnt+1);
-              Locking_Vars *lv = t->locks[obj];
-              if (lv != nullptr) {
-                if (lv->found_any) {
-                  // Partner found something
-                  infcnt = 0;
-                  inflast = true;
-                  depth_level = 1;
-                  depth = t->perm(depth_level);
-                }
-              }
-            }
-            // Pretend infeasible to backtrack properly
-            infeasible = true;
-          }
+          infcnt = 0;
+          inflast = false;
         }
-        // Duplicate code as we are marking this result infeasible
-        /* Update maxima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] > max[j]) {
-            max[j] = result[j];
-          }
-        }
-        /* Update minima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] < min[j]) {
-            min[j] = result[j];
-          }
-        }
-      }
-      if (!infeasible) {
-        if (t->locks) {
-          int obj = t->perm(infcnt+1);
-          Locking_Vars *lv = t->locks[obj];
-          if (lv != nullptr) {
-            lv->found_any = true;
-          }
-        }
-        infcnt = 0;
-        inflast = false;
-        /* Update maxima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] > max[j]) {
-            max[j] = result[j];
-          }
-        }
-        /* Update minima */
-        for (int j = 0; j < p.objcnt; j++) {
-          if (result[j] < min[j]) {
-            min[j] = result[j];
-          }
-        }
-      }
-      if (infeasible) {
-        infcnt++;
-        inflast = true;
-      } else {
-        infcnt = 0;
-        inflast = false;
       }
       // If we are sharing, and there are other threads, and this result
       // is infeasible, and it's a 2-objective problem
