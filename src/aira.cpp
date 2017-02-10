@@ -1274,6 +1274,44 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
               }
             }
           }
+
+          // Reset share_bounds to their limit. First, reset to ±infinity.
+            {
+              std::unique_lock<std::mutex> lk(lv->status_mutex);
+              lv->num_running_threads--;
+              if (lv->num_running_threads > 0) {
+                if (completed)
+                  break;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "waiting on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
+                lv->cv.wait(lk);
+              } else {
+                // Last in. Reset the shared_bounds here.
+                for(int pre_i = 0; pre_i <= infcnt+1; ++pre_i) {
+                  int i = t->perm(pre_i);
+                  if (t->share_bounds[i] != nullptr) {
+                    if (sense == MIN) {
+                      *t->share_bounds[i] = (int)-CPX_INFBOUND;
+                    } else {
+                      *t->share_bounds[i] = (int)CPX_INFBOUND;
+                    }
+                  }
+                }
+                lv->reset_num_running_threads();
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "releasing on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
+                lk.unlock();
+                lv->cv.notify_all();
+              }
+            }
           do {
             {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
