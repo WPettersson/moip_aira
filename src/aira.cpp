@@ -921,7 +921,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             }
           }
         }
-      } else if (sharing) {
+      } else if (sharing && t->locks && t->locks[t->perm(infcnt+1)]) {
         std::unique_lock<std::mutex> lk(t->locks[t->perm(infcnt+1)]->status_mutex);
 #ifdef DEBUG
           debug_mutex.lock();
@@ -1088,7 +1088,28 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           infcnt = 0;
           inflast = false;
         }
+      } else {
+        if (infeasible) {
+          infcnt++;
+          inflast = true;
+        } else {
+          infcnt = 0;
+          inflast = false;
+          /* Update maxima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] > max[j]) {
+              max[j] = result[j];
+            }
+          }
+          /* Update minima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] < min[j]) {
+              min[j] = result[j];
+            }
+          }
+        }
       }
+
       // If we are sharing, and there are other threads, and this result
       // is infeasible, and it's a 2-objective problem
       if (sharing && infeasible && (infcnt+1) < p.objcnt) { // Wait/share results of 2-objective problem
