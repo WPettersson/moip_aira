@@ -1131,18 +1131,22 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             lv->num_running_threads--; // This thread is no longer running.
 #ifdef DEBUG_SYNC
             debug_mutex.lock();
-            std::cout << "Thread " << t->id <<  " done, ";
+            std::cout << "Thread " << t->id <<  " done, at " << __LINE__ << " w/ ";
             std::cout << lv->num_running_threads << " threads still going." << std::endl;
             debug_mutex.unlock();
 #endif
-            if (t->share_bounds[updated_objective] != nullptr) {
-              if (sense == MIN) {
-                if (*t->share_bounds[updated_objective] < max[updated_objective]) {
-                  *t->share_bounds[updated_objective] = max[updated_objective];
-                }
-              } else {
-                if (*t->share_bounds[updated_objective] > min[updated_objective]) {
-                  *t->share_bounds[updated_objective] = min[updated_objective];
+            // Share all bounds!
+            for(int pre_i=0; pre_i < p.objcnt; ++pre_i) {
+              int i = t->perm(pre_i);
+              if (t->share_bounds[i] != nullptr) {
+                if (sense == MIN) {
+                  if (*t->share_bounds[i] < max[i]) {
+                    *t->share_bounds[i] = max[i];
+                  }
+                } else {
+                  if (*t->share_bounds[i] > min[i]) {
+                    *t->share_bounds[i] = min[i];
+                  }
                 }
               }
             }
@@ -1164,14 +1168,33 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
 #endif
-            if (t->share_to[updated_objective] != nullptr) {
-              if (sense == MIN) {
-                if (*t->share_to[updated_objective] > max[updated_objective]) {
-                  max[updated_objective] = *t->share_to[updated_objective];
+            // Share min/max values from "higher" objectives
+            for(int pre_i=infcnt+1; pre_i < p.objcnt; ++pre_i) {
+              int i = t->perm(pre_i);
+              if (t->share_to[i] != nullptr) {
+                if (sense == MIN) {
+                  if (*t->share_to[i] > max[i]) {
+                    max[i] = *t->share_to[i];
+                  }
+                } else {
+                  if (*t->share_to[i] < min[i]) {
+                    min[i] = *t->share_to[i];
+                  }
                 }
-              } else {
-                if (*t->share_to[updated_objective] < min[updated_objective]) {
-                  min[updated_objective] = *t->share_to[updated_objective];
+              }
+            }
+            // Share bounds on all objectives
+            for(int pre_i=0; pre_i < p.objcnt; ++pre_i) {
+              int i = t->perm(pre_i);
+              if (t->share_bounds[i] != nullptr) {
+                if (sense == MIN) {
+                  if (*t->share_bounds[i] > max[i]) {
+                    max[i] = *t->share_bounds[i];
+                  }
+                } else {
+                  if (*t->share_bounds[i] < min[i]) {
+                    min[i] = *t->share_bounds[i];
+                  }
                 }
               }
             }
@@ -1179,27 +1202,42 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             // This thread is last.
 #ifdef DEBUG_SYNC
             debug_mutex.lock();
-            std::cout << "Thread " << t->id <<  " done, ";
+            std::cout << "Thread " << t->id <<  " done at " << __LINE__ << ", ";
             std::cout << "last in." << std::endl;
             debug_mutex.unlock();
 #endif
-            if (t->share_bounds[updated_objective] != nullptr) {
-              if (sense == MIN) {
-                if (*t->share_bounds[updated_objective] < max[updated_objective]) {
-                  *t->share_bounds[updated_objective] = max[updated_objective];
+            // Sharing bounds on all objectives
+            for(int pre_i=0; pre_i < p.objcnt; ++pre_i) {
+              int i = t->perm(pre_i);
+              if (t->share_bounds[i] != nullptr) {
+                if (sense == MIN) {
+                  if (*t->share_bounds[i] < max[i]) {
+                    *t->share_bounds[i] = max[i];
+                  } else {
+                    max[i] = *t->share_bounds[i];
+                  }
                 } else {
-                  max[updated_objective] = *t->share_bounds[updated_objective];
+                  if (*t->share_bounds[i] > min[i]) {
+                    *t->share_bounds[i] = min[i];
+                  } else {
+                    min[i] = *t->share_bounds[i];
+                  }
                 }
-                *t->share_to[updated_objective] = max[updated_objective];
-                *t->share_bounds[updated_objective] = (int)-CPX_INFBOUND;
-              } else {
-                if (*t->share_bounds[updated_objective] > min[updated_objective]) {
-                  *t->share_bounds[updated_objective] = min[updated_objective];
+              }
+            }
+            // Sharing min/max from "higher" objectives
+            for(int pre_i=infcnt+1; pre_i < p.objcnt; ++pre_i) {
+              int i = t->perm(pre_i);
+              if (t->share_to[i] != nullptr) {
+                if (sense == MIN) {
+                  if (max[i] != (int)-CPX_INFBOUND) {
+                    *t->share_to[i] = max[i];
+                  }
                 } else {
-                  min[updated_objective] = *t->share_bounds[updated_objective];
+                  if (min[i] != (int)CPX_INFBOUND) {
+                    *t->share_to[i] = min[i];
+                  }
                 }
-                *t->share_to[updated_objective] = min[updated_objective];
-                *t->share_bounds[updated_objective] = (int)CPX_INFBOUND;
               }
             }
             // Reset value of found_any for next time we visit this level.
