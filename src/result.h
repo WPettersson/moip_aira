@@ -3,8 +3,10 @@
 
 #include <iostream>
 
-
-/* List node. */
+/**
+ * Stores a solution to a multi-objective problem. Currently accessed mainly
+ * via direct public members. Setters/getters are to come.
+ */
 class Result {
   public:
     int *result;
