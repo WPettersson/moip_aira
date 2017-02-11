@@ -78,6 +78,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
  * \param t A pointer to a Thread object that describes how this particular
  * thread should approach the problem.
  **/
+
+/* Note that this function is templated. There's no evidence that this does
+ * increase running time, but it's not like it decreases it either. */
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Thread *t);
 
