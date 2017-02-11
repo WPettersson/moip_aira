@@ -305,23 +305,6 @@ int main (int argc, char *argv[])
     }
   } else {
     // Not splitting.
-
-    // We can share relaxations and limits if there is something to share them with,
-    // and if the next thread is using an appropriate permutation
-//    if ((t+1 < num_threads) && (!split) &&
-//        (
-//         (perms == nullptr) || // No perms specified is ok for sharing.
-//         ((perms[t] % 2 == 0) && (perms[t] + 1 == perms[t+1]))
-//        )
-//      ) { // Can share limits+relaxations
-//      shared_limits = new std::atomic<double>[p.objcnt];
-//      for (int i = 0; i < p.objcnt; ++i) {
-//        shared_limits[i] = lim;
-//      }
-//    }
-//    Locking_Vars *lv = new Locking_Vars;
-//    lv->num_running_threads = (t+1) == num_threads ? 1 : 2;
-//    locking_var_list.push_back(lv);
     int * ordering = new int[p.objcnt];
     int ** share_from = new int*[p.objcnt] {nullptr};
     int ** share_to = new int*[p.objcnt] {nullptr};
