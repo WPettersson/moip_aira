@@ -90,7 +90,6 @@ int main (int argc, char *argv[])
 
   int status = 0; /* Operation status */
 
-  std::string permString;
   Env e;
 
   std::string pFilename, outputFilename;
@@ -129,10 +128,6 @@ int main (int argc, char *argv[])
      "Note that each internal thread calls CPLEX, so the total number of "
      "threads used is threads*cplex_threads.\n"
      "Optional, defaults to 1.")
-    ("perms", po::value<std::string>(&permString),
-     "The permutations (as indexed by sym_group.cpp) to be used by each "
-     "the threads. These must be entered as a comma separated list\n"
-     "  e.g. 0,1,4,5,8,9\n")
   ;
 
   po::store(po::parse_command_line(argc, argv, opt), v);
@@ -187,58 +182,6 @@ int main (int argc, char *argv[])
   if (status) {
     std::cerr << "Failure to turn off screen indicator, error." << std::endl ;
       return -ERR_CPLEX;
-  }
-
-
-
-  /**
-  * perms[i] is the permutation (as indexed by sym_group.cpp) that will be
-  * used by thread i. perms remain a nullptr if no permutation is specified.
-  */
-  int * perms = nullptr;
-  // Assign permutations to threads
-  if (v.count("perms") == 1) {
-    perms = new int[num_threads];
-    int index = 0;
-    std::string::iterator it = permString.begin();
-    while (it != permString.end()) {
-      if (index >= num_threads) {
-        std::cerr << "Error in permutation string - too many permutations "
-            "for " << num_threads << " threads." << std::endl;
-        return -1;
-      }
-      // Move past commas
-      while (*it == ',')
-        it++;
-      // Check to see if we ended on a comma
-      if (it == permString.end())
-        break;
-      std::string token(it, permString.end());
-      // Find next comma
-      size_t next_comma = token.find(',');
-      // If no more commas, this is the last entry
-      if (std::string::npos == next_comma) {
-        it = permString.end();
-        perms[index] = std::atoi(token.c_str());
-      } else {
-        it += next_comma;
-        token.resize(next_comma);
-        perms[index] = std::atoi(token.c_str());
-      }
-
-      // Make sure the permutation is valid.
-      if (perms[index] >= S[p.objcnt].size()) {
-        std::cerr << "Invalid permutation : " << perms[index] << " is too big" <<
-          "(" << S[p.objcnt].size() << ")." << std::endl;
-        return -1;
-      }
-      index++;
-    }
-    if (index != num_threads) {
-      std::cerr << "Error in permutation string - not enough permutations "
-          "for " << num_threads << " threads." << std::endl;
-      return -1;
-    }
   }
 
   outFile << std::endl << "Using improved algorithm" << std::endl;
