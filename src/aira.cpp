@@ -317,6 +317,7 @@ int main (int argc, char *argv[])
     delete[] share_to;
     delete[] share_from;
     delete[] share_bounds;
+    delete[] share_limit;
   }
   std::list<std::thread> threadList;
   if (p.objsen == MIN) {
