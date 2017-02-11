@@ -73,29 +73,13 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
  * Ozlen[1]. It is designed to be run multi-threaded, hence using locking
  * mechanisms.
  *
- * \param thread_id An identifier for the thread running this function
- * \pram fname The file name of the file holding the problem description
+ * \pram pFilename The file name of the file holding the problem description
  * \param all A Solutions object into which all solutions will be placed
- * \param lv A Locking_Vars struct holding all synchronisation particulars for
- * synchronisting two paired threads.
- * \param shared_limits An array of atomic ints, used to share limits between
- * two paired threads.
- * \param global_limits An array of atomic ints, used to share limits amongst
- * all running threads.
- * \param my_feasibles
- * \param partner_feasibles
- * first_result is the result of the optimisation with no constraints on
- * objective values.
- * p is the problem (class)
- * thread_id is the index into S_n of the order in which we optimise each
- * objective.
+ * \param t A pointer to a Thread object that describes how this particular
+ * thread should approach the problem.
  **/
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Thread *t);
-//void optimise(int thread_id, const char * fname, Solutions &all, Locking_Vars
-//    *lv, std::atomic<double> *shared_limits, std::atomic<double>
-//    *global_limits, std::list<int*> * my_feasibles, std::list<int*> *
-//    partner_feasibles, double split_start, double split_stop);
 
 bool problems_equal(const Result * a, const Result * b, int objcnt);
 
