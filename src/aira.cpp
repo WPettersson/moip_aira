@@ -343,8 +343,6 @@ int main (int argc, char *argv[])
   clock_gettime(CLOCK_MONOTONIC, &start);
   elapsedtime = (start.tv_sec + start.tv_nsec/1e9 - startelapsed);
 
-  //list = g_slist_sort(list, (GCompareFunc)icmp);
-  //list = g_slist_reverse(list);
   all.sort();
   solcount = 0;
 
@@ -396,14 +394,10 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm) {
   double * srhs;
   srhs = new double[p.objcnt];
 
-  //for(int i = 0; i < p.objcnt; ++i)
-  //  srhs[i] = rhs[perm[i]];
-
   memcpy(srhs, rhs, p.objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(e.env, e.lp);
 
-  // TODO Permutation applies here.
   for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
     int j = perm[j_preimage];
     status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
@@ -538,7 +532,6 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Thread *t) {
-//    std::list<int *> * my_feasibles, std::list<int *> * partner_feasibles,
   Env e;
   const bool sharing = (t->share_to != nullptr);
 #ifdef DEBUG
@@ -750,9 +743,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     }
     max[objective] = (int) -CPX_INFBOUND;
     min[objective] = (int) CPX_INFBOUND;
-//    if (t->share_from[objective] != nullptr) {
-//      max[objective] = min[objective] = *t->share_from[objective];
-//    }
     while (infcnt < objective_counter && !completed) {
       bool relaxed;
       int solnstat;
@@ -843,16 +833,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           std::cout << " got lock on " << t->perm(infcnt+1) << std::endl;
           debug_mutex.unlock();
 #endif
-        // Not splitting.
-        /* We want to keep the actual objective vector, and share it with our
-        * partner as a relaxation. */
-//        if (!infeasible) {
-//          int *objectives = new int[p.objcnt];
-//          for (int i = 0; i < p.objcnt; ++i) {
-//            objectives[i] = result[i];
-//          }
-//          partner_feasibles->push_back(objectives);
-//        }
+        // Not splitting, sharing.
         // Note that perm[1] is only shared with one other thread, that only
         // ever reads it, and that this thread always improves the value of
         // this shared limit, so we can use this faster update.
@@ -865,7 +846,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #endif
           if (t->share_to[t->perm(1)] != nullptr)
             *t->share_to[t->perm(1)] = result[t->perm(1)];
-        //  rhs[perm[0]] = my_limit;
         }
 
         if (!infeasible && (t->share_from[t->perm(0)] != nullptr)) {
@@ -1026,7 +1006,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 
       // If we are sharing, and there are other threads, and this result
       // is infeasible, and it's a 2-objective problem
-      if (sharing && infeasible && (infcnt+1) < p.objcnt) { // Wait/share results of 2-objective problem
+      if (sharing && infeasible && (infcnt+1) < p.objcnt) {
         int updated_objective = t->perm(infcnt+1);
 #ifdef DEBUG
         debug_mutex.lock();
@@ -1040,7 +1020,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           std::cout << " and min[" << updated_objective << "] is " << min[updated_objective];
         }
         std::cout << std::endl;
-        //<< lv->num_running_threads << "still running.";
         debug_mutex.unlock();
 #endif
         // If max/min have not been changed, then we have found zero new
@@ -1133,7 +1112,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
                 }
               }
             }
-          } else { // (lv->num_running_threads == 1) Should be guaranteed?
+          } else {
             // This thread is last.
 #ifdef DEBUG_SYNC
             debug_mutex.lock();

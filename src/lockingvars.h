@@ -13,10 +13,8 @@
 class Locking_Vars {
   public:
     std::mutex status_mutex;
-    std::mutex ready_mutex;
     std::atomic<int> num_running_threads;
     std::condition_variable cv;
-    std::condition_variable rv;
     std::atomic<bool> changed;
     std::atomic<bool> found_any;
 
