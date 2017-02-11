@@ -28,6 +28,23 @@ bool operator<(const Result& lhs, const Result& rhs) {
   return false;
 }
 
+bool operator==(const Result& lhs, const Result& rhs) {
+  if (lhs.infeasible != rhs.infeasible) {
+    return false;
+  }
+  if (rhs.infeasible) {
+    return true;
+  }
+  if (lhs.objective_count != rhs.objective_count)
+    return false;
+  for (int i = 0; i < lhs.objective_count; i++) {
+    if (lhs.result[i] != rhs.result[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::ostream& operator<<(std::ostream& out, const Result& r) {
   if (r.infeasible) {
     out << "Infeasible";

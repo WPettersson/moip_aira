@@ -84,8 +84,6 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Thread *t);
 
-bool problems_equal(const Result * a, const Result * b, int objcnt);
-
 namespace po = boost::program_options;
 
 int main (int argc, char *argv[])
@@ -353,7 +351,7 @@ int main (int argc, char *argv[])
       continue;
     bool printMe = true;
     for (auto& done: printed) {
-      if (problems_equal(done, soln, p.objcnt)) {
+      if (*done == *soln) {
         printMe = false;
         break;
       }
@@ -824,6 +822,25 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #endif
             }
           }
+          /* Update maxima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] > max[j]) {
+              max[j] = result[j];
+            }
+          }
+          /* Update minima */
+          for (int j = 0; j < p.objcnt; j++) {
+            if (result[j] < min[j]) {
+              min[j] = result[j];
+            }
+          }
+        }
+        if (infeasible) {
+          infcnt++;
+          inflast = true;
+        } else {
+          infcnt = 0;
+          inflast = false;
         }
       } else if (sharing && t->locks && t->locks[t->perm(infcnt+1)]) {
         std::unique_lock<std::mutex> lk(t->locks[t->perm(infcnt+1)]->status_mutex);
@@ -1679,22 +1696,24 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
       }
     }
   }
-  completed = true;
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "done!" << std::endl;
           debug_mutex.unlock();
 #endif
-  for(int i = 0; i < p.objcnt; ++i) {
-    Locking_Vars *lv = nullptr;
-    if (t->locks)
-      lv = t->locks[i];
-    if (lv != nullptr) {
-      {
-        std::unique_lock<std::mutex> lk(lv->status_mutex);
+  if (sharing) {
+    completed = true;
+    for(int i = 0; i < p.objcnt; ++i) {
+      Locking_Vars *lv = nullptr;
+      if (t->locks)
+        lv = t->locks[i];
+      if (lv != nullptr) {
+        {
+          std::unique_lock<std::mutex> lk(lv->status_mutex);
+        }
+        lv->cv.notify_all();
       }
-      lv->cv.notify_all();
     }
   }
 #ifdef FINETIMING
@@ -1709,23 +1728,4 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
   delete[] rhs;
   delete[] min;
   delete[] max;
-}
-
-
-bool problems_equal(const Result * a, const Result * b, int objcnt) {
-  // Are they both feasible, or both infeasible
-  if (a->infeasible != b->infeasible) {
-    return false;
-  }
-  // If one is infeasible, both are
-  if (a->infeasible) {
-    return true;
-  }
-  // Have to check actual result/objective values
-  for (int i = 0; i < objcnt; i++) {
-    if (a->result[i] != b->result[i]) {
-      return false;
-    }
-  }
-  return true;
 }
