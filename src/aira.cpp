@@ -101,6 +101,7 @@ int main (int argc, char *argv[])
   int solcount;
 
   bool spread = false;
+  split = false;
 
   po::variables_map v;
   po::options_description opt("Options for aira");
@@ -112,11 +113,11 @@ int main (int argc, char *argv[])
     ("output,o",
       po::value<std::string>(&outputFilename),
      "The output file. Optional.")
-    ("split,s",
+    ("split,",
      po::bool_switch(&split),
      "Split the range of the first objective into one strip per thread\n"
      "Optional, defaults to False.")
-    ("spread",
+    ("spread,s",
      po::bool_switch(&spread),
      "Spread threads out over various subgroups of the symmetries, or cluster inside subgroups.\n"
      "Option, defaults to False")
@@ -850,7 +851,6 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           std::cout << " got lock on " << t->perm(infcnt+1) << std::endl;
           debug_mutex.unlock();
 #endif
-        // Not splitting, sharing.
         // Note that perm[1] is only shared with one other thread, that only
         // ever reads it, and that this thread always improves the value of
         // this shared limit, so we can use this faster update.
@@ -1447,7 +1447,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
       }
 
-      if ((p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
+      if (sharing && (p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
         if (t->share_to[t->perm(p.objcnt-1)] == nullptr)
           continue;
 #ifdef DEBUG
@@ -1482,9 +1482,9 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         for (int pre_j = 0; pre_j < p.objcnt; pre_j++) {
           int j  = t->perm(pre_j);
           if ((pre_j < infcnt) || (!sharing) || (t->share_limit[j] == nullptr && t->share_from[j] == nullptr)) {
-            if (sense == MIN)
+            if (sense == MIN) {
               rhs[j] = CPX_INFBOUND;
-            else
+            } else {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
@@ -1492,6 +1492,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           debug_mutex.unlock();
 #endif
               rhs[j] = -CPX_INFBOUND;
+            }
           } else {
             int * share_from;
             if (t->share_limit[j] == nullptr)
