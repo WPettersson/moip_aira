@@ -1099,18 +1099,15 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             clock_gettime(CLOCK_MONOTONIC, &start);
             wait_time += (start.tv_sec + start.tv_nsec/1e9) - start_wait;
 #endif
-            // Share min/max values from "higher" objectives
-            for(int pre_i=infcnt+1; pre_i < p.objcnt; ++pre_i) {
-              int i = t->perm(pre_i);
-              if (t->share_to[i] != nullptr) {
-                if (sense == MIN) {
-                  if (*t->share_to[i] > max[i]) {
-                    max[i] = *t->share_to[i];
-                  }
-                } else {
-                  if (*t->share_to[i] < min[i]) {
-                    min[i] = *t->share_to[i];
-                  }
+            // Share min/max values
+            if (t->share_to[updated_objective] != nullptr) {
+              if (sense == MIN) {
+                if (*t->share_to[updated_objective] > max[updated_objective]) {
+                  max[updated_objective] = *t->share_to[updated_objective];
+                }
+              } else {
+                if (*t->share_to[updated_objective] < min[updated_objective]) {
+                  min[updated_objective] = *t->share_to[updated_objective];
                 }
               }
             }
@@ -1156,18 +1153,15 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
                 }
               }
             }
-            // Sharing min/max from "higher" objectives
-            for(int pre_i=infcnt+1; pre_i < p.objcnt; ++pre_i) {
-              int i = t->perm(pre_i);
-              if (t->share_to[i] != nullptr) {
-                if (sense == MIN) {
-                  if (max[i] != (int)-CPX_INFBOUND) {
-                    *t->share_to[i] = max[i];
-                  }
-                } else {
-                  if (min[i] != (int)CPX_INFBOUND) {
-                    *t->share_to[i] = min[i];
-                  }
+            // Sharing min/max
+            if (t->share_to[updated_objective] != nullptr) {
+              if (sense == MIN) {
+                if (max[updated_objective] != (int)-CPX_INFBOUND) {
+                  *t->share_to[updated_objective] = max[updated_objective];
+                }
+              } else {
+                if (min[updated_objective] != (int)CPX_INFBOUND) {
+                  *t->share_to[updated_objective] = min[updated_objective];
                 }
               }
             }
