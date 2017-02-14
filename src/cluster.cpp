@@ -52,9 +52,13 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
     }
     std::cout << std::endl;
 #endif
+    // If there is only one objective left to add, then at the previous stage
+    // we must've had 2 objectives left, and 2 threads to use (else the Thread
+    // object would be constructed there), so this thread would have a partner.
+    bool has_partner = (nObjLeft == 1);
     // Build thread
     Thread *t = new Thread(threads.size(), nObj, perm, share_to_, share_from_,
-        share_bounds_, share_limit_, locks);
+        share_bounds_, share_limit_, locks, has_partner);
     threads.push_back(t);
 //    threads.push_back( new Thread(threads.size(), nObj, perm, shared_limits));
   } else {

@@ -843,7 +843,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           infcnt = 0;
           inflast = false;
         }
-      } else if (sharing && t->locks && t->locks[t->perm(infcnt+1)]) {
+      } else if (sharing && t->partnered && t->locks && t->locks[t->perm(infcnt+1)]) {
         std::unique_lock<std::mutex> lk(t->locks[t->perm(infcnt+1)]->status_mutex);
 #ifdef DEBUG
           debug_mutex.lock();
