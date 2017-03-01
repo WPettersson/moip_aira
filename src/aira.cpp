@@ -67,6 +67,13 @@ std::atomic<int> ipcount;
 int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
 int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
 
+
+/**
+ * Finds out the limit (either maximum or minimum) of one objective in the
+ * problem. This is only used to set up the splitting algorithm correctly.
+ */
+int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense);
+
 /**
  * Optimise!
  * This function runs through the selected algorithm of Pettersson and
@@ -205,77 +212,18 @@ int main (int argc, char *argv[])
   std::list<Locking_Vars*> locking_var_list;
   double start_point, stop_point;
   if (split) {
-    double * rhs = new double[p.objcnt];
-    for (int i=0; i < p.objcnt; ++i) {
-      rhs[i] = p.rhs[i];
-    }
-    int * result = new int[p.objcnt];
-    int solnstat = solve(e, p, result, rhs, S[p.objcnt][0]);
-    if ( solnstat == CPXMIP_INFEASIBLE) {
-      std::cout << "Infeasible" << std::endl;
-      return 0;
-    }
-    all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
-#ifdef DEBUG
-    debug_mutex.lock();
-    std::cout << "Main thread with constraints ";
-    for(int i = 0; i < p.objcnt; ++i) {
-      if (rhs[i] > 1e09)
-        std::cout << "∞";
-      else if (rhs[i] < -1e09)
-        std::cout << "-∞";
-      else
-        std::cout << rhs[i];
-      std::cout << ",";
-    }
-    std::cout << " found ";
-    for(int i = 0; i < p.objcnt; ++i) {
-      std::cout << result[i] << ",";
-    }
-    std::cout << std::endl;
-    debug_mutex.unlock();
-#endif
-    start_point = result[p.objcnt-1];
     if (p.objsen == MIN) {
-      start_point += 1;
+      start_point = get_limit(e, p, p.objcnt-1, p.rhs, MAX);
     } else {
-      start_point -= 1;
+      start_point = get_limit(e, p, p.objcnt-1, p.rhs, MIN);
     }
-
-    solnstat = solve(e, p, result, rhs, S[p.objcnt][S[p.objcnt].size()-1]);
-    if ( solnstat == CPXMIP_INFEASIBLE) {
-      std::cout << "Infeasible" << std::endl;
-      return 0;
-    }
-    all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+    stop_point = get_limit(e, p, p.objcnt-1, p.rhs, p.objsen);
 #ifdef DEBUG
-    debug_mutex.lock();
-    std::cout << "Main thread with constraints ";
-    for(int i = 0; i < p.objcnt; ++i) {
-      if (rhs[i] > 1e09)
-        std::cout << "∞";
-      else if (rhs[i] < -1e09)
-        std::cout << "-∞";
-      else
-        std::cout << rhs[i];
-      std::cout << ",";
-    }
-    std::cout << " found ";
-    for(int i = 0; i < p.objcnt; ++i) {
-      std::cout << result[i] << ",";
-    }
-    std::cout << std::endl;
-    debug_mutex.unlock();
+          debug_mutex.lock();
+          std::cout << "Thread m found start point " << start_point;
+          std::cout << " and stop point " << stop_point << std::endl;
+          debug_mutex.unlock();
 #endif
-    stop_point = result[p.objcnt-1];
-    if (p.objsen == MIN) {
-      stop_point -= 1;
-    } else {
-      stop_point += 1;
-    }
-
-    delete[] rhs;
-    delete[] result;
   }
   /* Free up memory as all we needed was a count of the number of objectives. */
   if ( e.lp != NULL ) {
@@ -455,6 +403,86 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm) {
   return solnstat;
 }
 
+int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense) {
+
+  int cur_numcols, status, solnstat;
+  double objval;
+  double * srhs;
+  srhs = new double[p.objcnt];
+
+  memcpy(srhs, rhs, p.objcnt * sizeof(double));
+
+  cur_numcols = CPXgetnumcols(e.env, e.lp);
+
+  status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[obj], p.objcoef[obj]);
+  if (status) {
+    std::cerr << "Failed to set objective." << std::endl;
+  }
+
+  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, srhs);
+  if (status) {
+    std::cerr << "Failed to change constraint srhs" << std::endl;
+  }
+
+  int i_sense;
+  if (sense == MIN) {
+    i_sense = 1;
+  } else {
+    i_sense = -1;
+  }
+  status = CPXchgobjsen (e.env, e.lp, i_sense);
+  if (status) {
+    std::cerr << "Failed to change constraint srhs" << std::endl;
+  }
+
+  /* solve for current objective*/
+  status = CPXmipopt (e.env, e.lp);
+  if (status) {
+    std::cerr << "Failed to optimize LP." << std::endl;
+  }
+
+  // This is shared across threads, but it's an atomic integer (so read/writes
+  // are atomic) and thus we don't need a lock/mutex
+  ipcount++;
+
+  solnstat = CPXgetstat (e.env, e.lp);
+  if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+    if (sense == MIN) {
+      return (int)CPX_INFBOUND;
+    } else {
+      return (int)-CPX_INFBOUND;
+    }
+  }
+  status = CPXgetobjval (e.env, e.lp, &objval);
+  if ( status ) {
+    std::cerr << "Failed to obtain objective value." << std::endl;
+    exit(0);
+  }
+  if ( objval > 1/p.mip_tolerance ) {
+    while (objval > 1/p.mip_tolerance) {
+      p.mip_tolerance /= 10;
+    }
+    CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+    status = CPXmipopt (e.env, e.lp);
+    ipcount++;
+    solnstat = CPXgetstat (e.env, e.lp);
+    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+      if (sense == MIN) {
+        return (int)CPX_INFBOUND;
+      } else {
+        return (int)-CPX_INFBOUND;
+      }
+    }
+    status = CPXgetobjval (e.env, e.lp, &objval);
+    if ( status ) {
+      std::cerr << "Failed to obtain objective value." << std::endl;
+      exit(0);
+    }
+  }
+  delete[] srhs;
+
+  return (int)objval;
+}
 
 int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 
