@@ -1491,7 +1491,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         }
       }
       if (infeasible && (infcnt == objective_counter-1)) {
-        if ((p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
+        if (sharing && (p.objcnt > 2) && (objective_counter == p.objcnt - 1)) {
           if (t->share_to[t->perm(p.objcnt-1)] != nullptr) {
             if (sense == MIN) {
               *t->share_to[objective] = max[objective];
@@ -1634,7 +1634,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
         depth_level++;
         depth = t->perm(depth_level);
         if (sense == MIN) {
-          if (t->share_limit[depth] && (*t->share_limit[depth] < max[depth])) {
+          if (sharing && t->share_limit[depth] && (*t->share_limit[depth] < max[depth])) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
@@ -1653,7 +1653,7 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           }
           max[depth] = (int) -CPX_INFBOUND;
         } else {
-          if (t->share_limit[depth] && ((*t->share_limit[depth] > min[depth]) || (min[depth] == (int) CPX_INFBOUND))) {
+          if (sharing && t->share_limit[depth] && ((*t->share_limit[depth] > min[depth]) )) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
