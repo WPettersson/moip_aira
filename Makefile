@@ -1,7 +1,11 @@
 SRC = ./src
 TARGETDIR = ./build
 #TARGETDIR = ./debug
-#DEBUG_FLAGS = -g -DDEBUG -DDEBUG_SOLUTION_SEARCH
+#DEBUG_FLAGS = -g -DDEBUG
+
+# Extra debugging flags.
+# -DDEBUG_SOLUTION_SEARCH
+# -DDEBUG_SYNC
 CPLEXDIR=/home/enigma/opt/ibm/ILOG/CPLEX_Studio127
 CC = gcc
 CXX = g++
@@ -13,7 +17,7 @@ all: executable
 
 executable: $(TARGETDIR)/aira
 
-OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o $(TARGETDIR)/problem.o $(TARGETDIR)/cluster.o $(TARGETDIR)/thread.o $(TARGETDIR)/lockingvars.o
+OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o $(TARGETDIR)/problem.o $(TARGETDIR)/cluster.o $(TARGETDIR)/thread.o
 
 $(TARGETDIR):
 	mkdir -p $(TARGETDIR)
@@ -47,9 +51,6 @@ $(TARGETDIR)/cluster.o: $(SRC)/cluster.h $(SRC)/cluster.cpp
 
 $(TARGETDIR)/thread.o: $(SRC)/thread.h $(SRC)/thread.cpp
 	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/thread.cpp
-
-$(TARGETDIR)/lockingvars.o: $(SRC)/lockingvars.h $(SRC)/lockingvars.cpp
-	$(CXX) -c $(CFLAGS) -o $@ $(SRC)/lockingvars.cpp
 
 $(SRC)/symgroup_extern.h: $(SRC)/mk_symgroup.py
 	$(SRC)/mk_symgroup.py

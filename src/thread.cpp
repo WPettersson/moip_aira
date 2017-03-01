@@ -7,8 +7,8 @@
 #endif
 
 Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** share_from_,
-    Locking_Vars ** locks_) :
-  id(id_), split_start(0)//, split_stop(0)
+    int ** share_bounds_, int ** share_limit_, Locking_Vars ** locks_, bool partnered_) :
+  id(id_), partnered(partnered_), split_start(0)//, split_stop(0)
 {
   split_stop = 0;
   share_to = new int*[nObj];
@@ -28,9 +28,26 @@ Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** s
     std::cout << "share_from[" << i << "] = " << share_from[i] << std::endl;
 #endif
   }
+  share_bounds = new int*[nObj];
+  for(int i = 0; i < nObj; ++i) {
+    share_bounds[i] = share_bounds_[i];
+#ifdef DEBUG
+    std::cout << "share_bounds[" << i << "] = " << share_bounds[i] << std::endl;
+#endif
+  }
+  share_limit = new int*[nObj];
+  for(int i = 0; i < nObj; ++i) {
+    share_limit[i] = share_limit_[i];
+#ifdef DEBUG
+    std::cout << "share_limit[" << i << "] = " << share_limit[i] << std::endl;
+#endif
+  }
   locks = new Locking_Vars* [nObj];
   for(int i = 0; i < nObj; ++i) {
     locks[i] = locks_[i];
+#ifdef DEBUG
+    std::cout << "locks[" << i << "] = " << locks[i] << std::endl;
+#endif
   }
   perm_ = new int[nObj];
   for(int i = 0; i < nObj; ++i) {
@@ -39,7 +56,7 @@ Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** s
 }
 
 Thread::Thread(int id_, int nObj, double split_start_, double split_stop_) :
-  id(id_), share_to(nullptr), share_from(nullptr), split_start(split_start_),
+  id(id_), share_to(nullptr), share_from(nullptr), locks(nullptr), split_start(split_start_),
   split_stop(split_stop_)
 {
   perm_ = new int[nObj];

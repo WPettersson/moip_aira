@@ -6,10 +6,20 @@ all: 2KP50 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 	@echo -n "Testing $* "
 	@$(TARGETDIR)/aira -p $(EXDIR)/$** -o $*.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t1-c1 passed " && rm $*.out || echo -n "t1-c1 failed "
-	@$(TARGETDIR)/aira -t 2 -p $(EXDIR)/$** -o $*.out
+	@$(TARGETDIR)/aira -t 2 -p $(EXDIR)/$**.lp -o $*.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t2-c1 passed " && rm $*.out || echo -n "t2-c1 failed "
-	@$(TARGETDIR)/aira -c 2 -p $(EXDIR)/$** -o $*.out
+	@$(TARGETDIR)/aira -c 2 -p $(EXDIR)/$**.lp -o $*.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t1-c2 passed " && rm $*.out || echo -n "t1-c2 failed "
+	@echo
+
+moip_2_30_1_knapsack:
+	@echo -n "Testing moip_2_30_1_knapsack "
+	@$(TARGETDIR)/aira -p $(EXDIR)/moip_2_30_1_knapsack* -o moip_2_30_1_knapsack.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/moip_2_30_1_knapsack.out moip_2_30_1_knapsack.out && echo -n "t1-c1 passed " && rm moip_2_30_1_knapsack.out || echo -n "t1-c1 failed "
+	@$(TARGETDIR)/aira -t 2 -p $(EXDIR)/moip_2_30_1_knapsack.mop -o moip_2_30_1_knapsack.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/moip_2_30_1_knapsack.out moip_2_30_1_knapsack.out && echo -n "t2-c1 passed " && rm moip_2_30_1_knapsack.out || echo -n "t2-c1 failed "
+	@$(TARGETDIR)/aira -c 2 -p $(EXDIR)/moip_2_30_1_knapsack.mop -o moip_2_30_1_knapsack.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/moip_2_30_1_knapsack.out moip_2_30_1_knapsack.out && echo -n "t1-c2 passed " && rm moip_2_30_1_knapsack.out || echo -n "t1-c2 failed "
 	@echo
 
 4AP05:
@@ -22,8 +32,8 @@ all: 2KP50 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 	@diff -w -I'seconds\|solved' $(EXDIR)/4AP05.out 4AP05.out && echo -n "t1-c2 passed " && rm 4AP05.out || echo -n "t1-c2 failed "
 	@$(TARGETDIR)/aira -t 4 -p $(EXDIR)/4AP05.lp -o 4AP05.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/4AP05.out 4AP05.out && echo -n "t4 passed " && rm 4AP05.out || echo -n "t4 failed "
-	@$(TARGETDIR)/aira -t 4 --perms 0,1,6,7 -p $(EXDIR)/4AP05.lp -o 4AP05.out
-	@diff -w -I'seconds\|solved' $(EXDIR)/4AP05.out 4AP05.out && echo -n "t4-altperms passed " && rm 4AP05.out || echo -n "t4-altperms failed "
+	@$(TARGETDIR)/aira -t 4 --spread -p $(EXDIR)/4AP05.lp -o 4AP05.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/4AP05.out 4AP05.out && echo -n "t4-spread passed " && rm 4AP05.out || echo -n "t4-spread failed "
 	@echo
 
 4KP10:
@@ -36,8 +46,8 @@ all: 2KP50 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t1-c2 passed " && rm 4KP10.out || echo -n "t1-c2 failed "
 	@$(TARGETDIR)/aira -t 4 -p $(EXDIR)/4KP10.lp -o 4KP10.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t4 passed " && rm 4KP10.out || echo -n "t4 failed "
-	@$(TARGETDIR)/aira -t 4 --perms 0,1,6,7 -p $(EXDIR)/4KP10.lp -o 4KP10.out
-	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t4-altperms passed " && rm 4KP10.out || echo -n "t4-altperms failed "
+	@$(TARGETDIR)/aira -t 4 --spread -p $(EXDIR)/4KP10.lp -o 4KP10.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/4KP10.out 4KP10.out && echo -n "t4-spread passed " && rm 4KP10.out || echo -n "t4-spread failed "
 	@echo
 
 2KP50:

@@ -6,24 +6,22 @@
 
 #ifndef CPX_INFBOUND
 #include <climits>
-#define CPX_INFBOUND INT_MAX
+#define INFBOUND INT_MAX
+#else
+#define INFBOUND CPX_INFBOUND
 #endif
 
 #include "cluster.h"
 #include "sense.h"
 #include "thread.h"
 #include "lockingvars.h"
+#include "symgroup.h" // S[n].size()
 
-Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * ordering, int ** share_to, int ** share_from, std::list<Thread*> & threads, Locking_Vars ** locks) {
+Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
+    int nObjLeft, int * ordering, int ** share_to_, int ** share_from_,
+    int ** share_bounds_, int ** share_limit_, std::list<Thread*> & threads,
+    Locking_Vars ** locks) {
   if (nThreads == 1) {
-#ifdef DEBUG
-    std::cout << "Thread " << threads.size() << " has ordering ";
-    std::cout << ordering[0];
-    for(int d = 1; d < nObj - nObjLeft; ++d) {
-      std::cout << "," << ordering[d];
-    }
-    std::cout << std::endl;
-#endif
     // Build perm
     int * perm = new int[nObj];
     int i;
@@ -54,11 +52,26 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * orderi
     }
     std::cout << std::endl;
 #endif
+    // If there is only one objective left to add, then at the previous stage
+    // we must've had 2 objectives left, and 2 threads to use (else the Thread
+    // object would be constructed there), so this thread would have a partner.
+    bool has_partner = (nObjLeft == 1);
     // Build thread
-    Thread *t = new Thread(threads.size(), nObj, perm, share_to, share_from, locks);
+    Thread *t = new Thread(threads.size(), nObj, perm, share_to_, share_from_,
+        share_bounds_, share_limit_, locks, has_partner);
     threads.push_back(t);
 //    threads.push_back( new Thread(threads.size(), nObj, perm, shared_limits));
   } else {
+    int ** share_to = new int*[nObj];
+    int ** share_from = new int*[nObj];
+    int ** share_limit = new int*[nObj];
+    int ** share_bounds = new int*[nObj];
+    for(int j = 0; j < nObj; ++j) {
+      share_to[j] = share_to_[j];
+      share_bounds[j] = share_bounds_[j];
+      share_from[j] = share_from_[j];
+      share_limit[j] = share_limit_[j];
+    }
     // Work out which objectives don't occur in ordering
     int ind = 0;
     int * objLeft = new int[nObj];
@@ -76,56 +89,141 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, int nObjLeft, int * orderi
       }
     }
     int ** new_shares = new int*[nObj] {nullptr};
+    int ** new_bounds = new int*[nObj] {nullptr};
+    int ** new_limit = new int*[nObj] {nullptr};
     int num_sub_clusters = (ind < nThreads) ? ind : nThreads;
     for(int j = 0; j < num_sub_clusters; ++j) {
       int pos = nObj - objLeft[j] - 1;
       new_shares[pos] = new int;
+      new_bounds[pos] = new int;
+      new_limit[pos] = new int;
       if (sense == MIN) {
-        *new_shares[pos] = CPX_INFBOUND;
+        *new_shares[pos] = INFBOUND;
+        *new_bounds[pos] = -INFBOUND;
+        *new_limit[pos] = INFBOUND;
       } else {
-        *new_shares[pos] = -CPX_INFBOUND;
+        *new_shares[pos] = -INFBOUND;
+        *new_bounds[pos] = INFBOUND;
+        *new_limit[pos] = -INFBOUND;
       }
     }
 
-    // Split up threads
-    int perCluster = nThreads / nObjLeft;
-    int withExtra = nThreads % nObjLeft;
-    int i;
-    for(i = 0; i < withExtra ; ++i) {
-      ordering[ nObj - nObjLeft ] = objLeft[i];
-      int pos = nObj - objLeft[i] - 1;
-      locks[pos] = new Locking_Vars(perCluster + 1);
-      for(int j = 0; j < nObjLeft; ++j) {
-        int obj = objLeft[j];
-        if (obj == pos) {
-          share_to[obj] = new_shares[obj];
-        } else {
-          share_from[obj] = new_shares[obj];
-        }
-      }
-      Cluster(perCluster + 1, nObj, sense, nObjLeft - 1, ordering, share_to, share_from,
-          threads, locks);
-      share_to[pos] = nullptr;
-    }
-    if (perCluster > 0) {
-      for( ; i < nObjLeft ; ++i) {
+    if (spread_threads) {
+      // Split up threads
+      int perCluster = nThreads / nObjLeft;
+      int withExtra = nThreads % nObjLeft;
+      int i;
+      for(i = 0; i < withExtra ; ++i) {
         ordering[ nObj - nObjLeft ] = objLeft[i];
         int pos = nObj - objLeft[i] - 1;
-        locks[pos] = new Locking_Vars(perCluster);
-        for(int j = 0; j < nObj; ++j) {
-          int obj = objLeft[j];
+        locks[pos] = new Locking_Vars(perCluster + 1);
+        int * old_share_to = share_to[pos];
+        int * old_share_bounds = share_bounds[pos];
+        int * old_share_limit = share_limit[pos];
+        int ** old_from = new int*[nObj];
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          old_from[obj] = share_from[obj];
+        }
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
           if (obj == pos) {
             share_to[obj] = new_shares[obj];
+            share_bounds[obj] = new_bounds[obj];
+            share_limit[obj] = new_limit[obj];
           } else {
             share_from[obj] = new_shares[obj];
           }
         }
-        Cluster(perCluster, nObj, sense, nObjLeft - 1, ordering, share_to, share_from,
-            threads, locks);
-        share_to[pos] = nullptr;
+        Cluster(perCluster + 1, nObj, sense, spread_threads, nObjLeft - 1,
+            ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+        share_to[pos] = old_share_to;
+        share_bounds[pos] = old_share_bounds;
+        share_limit[pos] = old_share_limit;
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          share_from[obj] = old_from[obj];
+        }
+      }
+      if (perCluster > 0) {
+        for( ; i < nObjLeft ; ++i) {
+          ordering[ nObj - nObjLeft ] = objLeft[i];
+          int pos = nObj - objLeft[i] - 1;
+          int * old_share_to = share_to[pos];
+          int * old_share_bounds = share_bounds[pos];
+          int * old_share_limit = share_limit[pos];
+          locks[pos] = new Locking_Vars(perCluster);
+          int ** old_from = new int*[nObj];
+          for(int j = 0; j < nObjLeft; ++j) {
+            int obj = nObj - objLeft[j] - 1;
+            old_from[obj] = share_from[obj];
+          }
+          for(int j = 0; j < nObjLeft; ++j) {
+            int obj = nObj - objLeft[j] - 1;
+            if (obj == pos) {
+              share_to[obj] = new_shares[obj];
+              share_bounds[obj] = new_bounds[obj];
+              share_limit[obj] = new_limit[obj];
+            } else {
+              share_from[obj] = new_shares[obj];
+            }
+          }
+          Cluster(perCluster, nObj, sense, spread_threads, nObjLeft - 1,
+              ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+          share_to[pos] = old_share_to;
+          share_bounds[pos] = old_share_bounds;
+          share_limit[pos] = old_share_limit;
+          for(int j = 0; j < nObjLeft; ++j) {
+            int obj = nObj - objLeft[j] - 1;
+            share_from[obj] = old_from[obj];
+          }
+        }
+      }
+    } else { // grouping threads "near" each other
+      int threads_remaining = nThreads;
+      int i = 0; // Which objective we're currently assigning threads to.
+      while (threads_remaining > 0) {
+        int threads_to_use = (S[nObjLeft-1].size() > threads_remaining) ? threads_remaining : S[nObjLeft-1].size();
+        ordering[ nObj - nObjLeft ] = objLeft[i];
+        int pos = nObj - objLeft[i] - 1;
+        locks[pos] = new Locking_Vars(threads_to_use);
+        int * old_share_to = share_to[pos];
+        int * old_share_bounds = share_bounds[pos];
+        int * old_share_limit = share_limit[pos];
+        int ** old_from = new int*[nObj];
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          old_from[obj] = share_from[obj];
+        }
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          if (obj == pos) {
+            share_to[obj] = new_shares[obj];
+            share_bounds[pos] = new_bounds[obj];
+            share_limit[obj] = new_limit[obj];
+          } else {
+            share_from[obj] = new_shares[obj];
+          }
+        }
+        Cluster(threads_to_use, nObj, sense, spread_threads, nObjLeft - 1,
+            ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+        threads_remaining -= threads_to_use;
+        share_to[pos] = old_share_to;
+        share_bounds[pos] = old_share_bounds;
+        share_limit[pos] = old_share_limit;
+        for(int j = 0; j < nObjLeft; ++j) {
+          int obj = nObj - objLeft[j] - 1;
+          share_from[obj] = old_from[obj];
+        }
+        ++i;
       }
     }
     delete[] objLeft;
     delete[] new_shares;
+    delete[] new_limit;
+    delete[] share_to;
+    delete[] share_from;
+    delete[] share_limit;
+    delete[] share_bounds;
   }
 }
