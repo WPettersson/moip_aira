@@ -829,26 +829,28 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
 #endif
       if (split) {
         if (!infeasible) {
-          // check if we cross midpoint if we are thread 1
-          if (sense == MIN) {
-            if (result[p.objcnt-1] < t->split_stop) {
-              infeasible = true;
+          // check if we cross midpoint
+          if (infcnt == p.objcnt - 2) {
+            if (sense == MIN) {
+              if (rhs[p.objcnt-1] < t->split_stop) {
+                infeasible = true;
 #ifdef DEBUG
-              debug_mutex.lock();
-              std::cout << "Thread " << t->id << " reached split_stop";
-              std::cout << " " << t->split_stop << std::endl;
-              debug_mutex.unlock();
+                debug_mutex.lock();
+                std::cout << "Thread " << t->id << " reached split_stop";
+                std::cout << " " << t->split_stop << std::endl;
+                debug_mutex.unlock();
 #endif
-            }
-          } else {
-            if (result[p.objcnt-1] > t->split_stop) {
-              infeasible = true;
+              }
+            } else {
+              if (rhs[p.objcnt-1] > t->split_stop) {
+                infeasible = true;
 #ifdef DEBUG
-              debug_mutex.lock();
-              std::cout << "Thread " << t->id << " reached split_stop";
-              std::cout << " " << t->split_stop << std::endl;
-              debug_mutex.unlock();
+                debug_mutex.lock();
+                std::cout << "Thread " << t->id << " reached split_stop";
+                std::cout << " " << t->split_stop << std::endl;
+                debug_mutex.unlock();
 #endif
+              }
             }
           }
           /* Update maxima */
@@ -1563,6 +1565,10 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
             }
           }
         }
+        /* If splitting, use split_start and not +/- infinity */
+        if (split) {
+          rhs[p.objcnt-1] = t->split_start;
+        }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
@@ -1597,40 +1603,49 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           std::cout << "increasing depth from " << depth_level << std::endl;
           debug_mutex.unlock();
 #endif
-        if (sense == MIN) {
-          int * share_from = nullptr;
-          if (t->share_limit[depth] != nullptr)
-            share_from = t->share_limit[depth];
-          else if (t->share_from[depth] != nullptr)
-            share_from = t->share_from[depth];
-          if (share_from != nullptr)
-            rhs[depth] = *share_from - 1;
-          else
-            rhs[depth] = CPX_INFBOUND;
-        } else {
-          int * share_from = nullptr;
-          if (t->share_limit[depth] != nullptr)
-            share_from = t->share_limit[depth];
-          else if (t->share_from[depth] != nullptr)
-            share_from = t->share_from[depth];
-          if (share_from != nullptr) {
-#ifdef DEBUG
-          debug_mutex.lock();
-          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
-          std::cout << "setting rhs[" << depth << "] to " << (*share_from + 1) << std::endl;
-          debug_mutex.unlock();
-#endif
-            rhs[depth] = *share_from + 1;
+        if (sharing) {
+          if (sense == MIN) {
+            int * share_from = nullptr;
+            if (t->share_limit[depth] != nullptr)
+              share_from = t->share_limit[depth];
+            else if (t->share_from[depth] != nullptr)
+              share_from = t->share_from[depth];
+            if (share_from != nullptr)
+              rhs[depth] = *share_from - 1;
+            else
+              rhs[depth] = CPX_INFBOUND;
           } else {
+            int * share_from = nullptr;
+            if (t->share_limit[depth] != nullptr)
+              share_from = t->share_limit[depth];
+            else if (t->share_from[depth] != nullptr)
+              share_from = t->share_from[depth];
+            if (share_from != nullptr) {
 #ifdef DEBUG
-          debug_mutex.lock();
-          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
-          std::cout << "setting rhs[" << depth << "] to " << -CPX_INFBOUND << std::endl;
-          debug_mutex.unlock();
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+            std::cout << "setting rhs[" << depth << "] to " << (*share_from + 1) << std::endl;
+            debug_mutex.unlock();
 #endif
+              rhs[depth] = *share_from + 1;
+            } else {
+#ifdef DEBUG
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+            std::cout << "setting rhs[" << depth << "] to " << -CPX_INFBOUND << std::endl;
+            debug_mutex.unlock();
+#endif
+              rhs[depth] = -CPX_INFBOUND;
+            }
+          }
+        } else {
+          if (sense == MIN) {
+            rhs[depth] = CPX_INFBOUND;
+          } else {
             rhs[depth] = -CPX_INFBOUND;
           }
         }
+
         depth_level++;
         depth = t->perm(depth_level);
         if (sense == MIN) {
