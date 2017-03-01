@@ -10,6 +10,8 @@ all: 2KP50 2AP05 3AP05 3KP10 4AP05 4KP10 moip_2_30_1_knapsack;
 	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t2-c1 passed " && rm $*.out || echo -n "t2-c1 failed "
 	@$(TARGETDIR)/aira -c 2 -p $(EXDIR)/$**.lp -o $*.out
 	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t1-c2 passed " && rm $*.out || echo -n "t1-c2 failed "
+	@$(TARGETDIR)/aira -t 2 --split -p $(EXDIR)/$**.lp -o $*.out
+	@diff -w -I'seconds\|solved' $(EXDIR)/$*.out $*.out && echo -n "t2-split passed " && rm $*.out || echo -n "t2-split failed "
 	@echo
 
 moip_2_30_1_knapsack:
