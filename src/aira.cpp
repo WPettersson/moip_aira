@@ -768,6 +768,30 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
           debug_mutex.unlock();
 #endif
     }
+    if (split) {
+      // check if we cross midpoint
+      if (sense == MIN) {
+        if (rhs[p.objcnt-1] < t->split_stop) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " reached split_stop";
+          std::cout << " " << t->split_stop << std::endl;
+          debug_mutex.unlock();
+#endif
+          break;
+        }
+      } else {
+        if (rhs[p.objcnt-1] > t->split_stop) {
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " reached split_stop";
+          std::cout << " " << t->split_stop << std::endl;
+          debug_mutex.unlock();
+#endif
+          break;
+        }
+      }
+    }
     max[objective] = (int) -CPX_INFBOUND;
     min[objective] = (int) CPX_INFBOUND;
     while (infcnt < objective_counter && !completed) {
