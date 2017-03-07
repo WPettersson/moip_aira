@@ -225,7 +225,7 @@ int main (int argc, char *argv[])
       int ** share_bounds = new int*[p.objcnt] {nullptr};
       int ** share_limit = new int*[p.objcnt] {nullptr};
       Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
-      Cluster c(num_threads, p.objcnt-1, p.objsen, spread, p.objcnt-1, ordering,
+      Cluster c(num_threads_here, p.objcnt-1, p.objsen, spread, p.objcnt-1, ordering,
           share_from, share_to, share_bounds, share_limit, threads, lvs);
       delete[] ordering;
       delete[] share_to;
