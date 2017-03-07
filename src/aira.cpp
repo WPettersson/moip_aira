@@ -715,7 +715,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinal
   /* Need to add a result to the list here*/
   s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
   // Note that if we are splitting, we aren't sharing.
-  if (!split) {
+  if (split) {
+    if (p.objsen == MIN)
+      t->split_stop--;
+    else
+      t->split_stop++;
+  } else {
     if (sharing && (solnstat != CPXMIP_INFEASIBLE)) {
       int *objectives = new int[p.objcnt];
       for (int i = 0; i < p.objcnt; ++i) {
