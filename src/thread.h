@@ -4,6 +4,8 @@
 #include "lockingvars.h"
 
 class Thread {
+  private:
+    int nObj;
   public:
     int id;
     int perm(int) const;
@@ -18,6 +20,7 @@ class Thread {
     double split_start;
     double split_stop;
 
+    void setNumObjectives(int newObj);
 
     Thread(int id_, int nObj, const int * perm_, int ** share_to_,
         int ** share_from_, int ** share_bounds_, int ** share_limit_, 
