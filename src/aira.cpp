@@ -89,7 +89,7 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense);
 /* Note that this function is templated. There's no evidence that this does
  * increase running time, but it's not like it decreases it either. */
 template<Sense sense>
-void optimise(const char * pFilename, Solutions & all, Thread *t);
+void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinalObjective = false);
 
 namespace po = boost::program_options;
 
@@ -212,10 +212,67 @@ int main (int argc, char *argv[])
   std::list<Locking_Vars*> locking_var_list;
   double start_point, stop_point;
   if (split) {
-    if (p.objsen == MIN) {
-      start_point = get_limit(e, p, p.objcnt-1, p.rhs, MAX);
-    } else {
-      start_point = get_limit(e, p, p.objcnt-1, p.rhs, MIN);
+    // Get start point by running 1 iteration of our algorithm on first n-1
+    // objectives only.
+    {
+      int num_threads_here = num_threads;
+      if (num_threads_here > S[p.objcnt-1].size())
+        num_threads_here = S[p.objcnt-1].size();
+      std::list<Thread*> threads;
+      int * ordering = new int[p.objcnt];
+      int ** share_from = new int*[p.objcnt] {nullptr};
+      int ** share_to = new int*[p.objcnt] {nullptr};
+      int ** share_bounds = new int*[p.objcnt] {nullptr};
+      int ** share_limit = new int*[p.objcnt] {nullptr};
+      Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
+      Cluster c(num_threads, p.objcnt-1, p.objsen, spread, p.objcnt-1, ordering,
+          share_from, share_to, share_bounds, share_limit, threads, lvs);
+      delete[] ordering;
+      delete[] share_to;
+      delete[] share_from;
+      delete[] share_bounds;
+      delete[] share_limit;
+      std::list<std::thread> threadList;
+      Solutions here(p.objcnt);
+      split = false; // Don't split here, we're just getting a limit
+      if (p.objsen == MIN) {
+        for(Thread* thread: threads) {
+          thread->setNumObjectives(p.objcnt);
+          threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
+              std::ref(here), thread, true);
+        }
+      } else {
+        for(Thread* & thread: threads) {
+          thread->setNumObjectives(p.objcnt);
+          threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
+              std::ref(here), thread, true);
+        }
+      }
+      for (auto& thread: threadList)
+        thread.join();
+      split = true;
+      completed = false;
+      for (auto lv: locking_var_list)
+        delete lv;
+      if (p.objsen == MAX) {
+        start_point = (int) CPX_INFBOUND;
+        for(auto r: here) {
+          if (r->infeasible)
+            continue;
+          int last = r->result[p.objcnt-1];
+          if (last < start_point)
+            start_point = last;
+        }
+      } else {
+        start_point = (int) -CPX_INFBOUND;
+        for(auto r: here) {
+          if (r->infeasible)
+            continue;
+          int last = r->result[p.objcnt-1];
+          if (last > start_point)
+            start_point = last;
+        }
+      }
     }
     stop_point = get_limit(e, p, p.objcnt-1, p.rhs, p.objsen);
 #ifdef DEBUG
@@ -270,12 +327,12 @@ int main (int argc, char *argv[])
   if (p.objsen == MIN) {
     for(Thread* thread: threads) {
       threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
-          std::ref(all), thread);
+          std::ref(all), thread, false);
     }
   } else {
     for(Thread* & thread: threads) {
       threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
-          std::ref(all), thread);
+          std::ref(all), thread, false);
     }
   }
   for (auto& thread: threadList)
@@ -558,7 +615,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 }
 
 template<Sense sense>
-void optimise(const char * pFilename, Solutions & all, Thread *t) {
+void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinalObjective) {
   Env e;
   const bool sharing = (t->share_to != nullptr);
 #ifdef DEBUG
