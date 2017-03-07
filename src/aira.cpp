@@ -644,8 +644,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     std::cout << ",";
   }
   std::cout << " found ";
-  for(int i = 0; i < p.objcnt; ++i) {
-    std::cout << result[i] << ",";
+  if (solnstat == CPXMIP_INFEASIBLE) {
+    std::cout << "infeasible";
+  } else {
+    for(int i = 0; i < p.objcnt; ++i) {
+      std::cout << result[i] << ",";
+    }
   }
   std::cout << std::endl;
   debug_mutex.unlock();
@@ -728,6 +732,18 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     infcnt = 0; /* Infeasible count*/
     inflast = false; /* Last iteration infeasible?*/
 
+    if (onlyFinalObjective && (objective_counter == p.objcnt-1)) {
+#ifdef DEBUG
+        debug_mutex.lock();
+        std::cout << "Thread " << t->id <<  " at final objective, ";
+        std::cout << ", objective_counter is " << objective_counter;
+        std::cout << std::endl;
+        debug_mutex.unlock();
+#endif
+        completed = true;
+        break;
+    }
+
     /* Set all constraints back to infinity*/
     for (int j_pre = 1; j_pre < p.objcnt; j_pre++) {
       int j = t->perm(j_pre);
@@ -759,6 +775,12 @@ void optimise(const char * pFilename, Solutions & all, Thread *t) {
     /* Set rhs of current depth */
     if (sense == MIN) {
       rhs[objective] = max[objective]-1;
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << "setting rhs[" << objective << "] to " << (max[objective]-1) << std::endl;
+          debug_mutex.unlock();
+#endif
     } else {
       rhs[objective] = min[objective]+1;
 #ifdef DEBUG
