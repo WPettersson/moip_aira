@@ -39,6 +39,43 @@ int cplex_threads;
 bool split;
 
 /**
+ * If we are splitting, are we giving each thread the same sized range, or are
+ * we assuming that the last objective is distributed normally, with a mean of
+ * (highest+lowest)/2 and a std-dev of (highest-lowest)/6?
+ */
+bool split_normal;
+
+/**
+ * If we are assuming a normal distribution, here are the values we use. Only
+ * have numbers for <= 12 threads, feel free to generate more.
+ *
+ * thread i, from X threads all together, has boundss normal_values[X][i] and
+ * normal_values[X][i+1]
+ */
+
+double normal_values[13][13] {
+  {0}, // 0 threads, to allow direct indexing
+  {0, 1},
+  {0, 0.5, 1},
+  {0, 0.356, 0.644, 1},
+  {0, 0.275, 0.5, 0.725, 1},
+  {0, 0.219, 0.416, 0.584, 0.781, 1},
+  {0, 0.178, 0.256, 0.5, 0.644, 0.822, 1},
+  {0, 0.144, 0.311, 0.44, 0.56, 0.689, 0.856, 1},
+  {0, 0.117, 0.275, 0.394, 0.5, 0.606, 0.725, 0.883, 1},
+  {0, 0.093, 0.245, 0.356, 0.453, 0.547, 0.644, 0.755, 0.907, 1},
+  {0, 0.073, 0.219, 0.325, 0.416, 0.5, 0.584, 0.675, 0.781, 0.927, 1},
+  {0, 0.055, 0.197, 0.298, 0.384, 0.462, 0.538, 0.616, 0.702, 0.803, 0.945, 1},
+  {0, 0.039, 0.178, 0.275, 0.356, 0.430, 0.5, 0.570, 0.644, 0.725, 0.822, 0.961, 1}
+};
+
+/**
+ * Since normal values are pre-computed, we also have a limit on the number of
+ * threads.
+ */
+const int MAX_THREADS_NORMAL_SPLIT = 12;
+
+/**
  * Has a thread completed its search. If one thread is finished, it will have
  * synchronised along the way, and therefore it (and possibly its
  * cluster-friends) will have the complete list of solutions. That is, if
@@ -124,6 +161,10 @@ int main (int argc, char *argv[])
      po::bool_switch(&split),
      "Split the range of the first objective into one strip per thread\n"
      "Optional, defaults to False.")
+    ("split-normal,",
+     po::bool_switch(&split_normal),
+     "If splitting, assume a normal distribution for objective values\n"
+     "Optional, defaults to False.")
     ("spread,s",
      po::bool_switch(&spread),
      "Spread threads out over various subgroups of the symmetries, or cluster inside subgroups.\n"
@@ -148,6 +189,11 @@ int main (int argc, char *argv[])
     return(1);
   }
 
+  if (split_normal && (num_threads > MAX_THREADS_NORMAL_SPLIT)) {
+    std::cerr << "Error: split_normal can only handle at most "
+      << MAX_THREADS_NORMAL_SPLIT << " threads." << std::endl;
+    return(1);
+  }
 
   if (v.count("lp") == 0) {
     // usage();
@@ -303,9 +349,23 @@ int main (int argc, char *argv[])
     double split_stop;
     double step_size = (stop_point - start_point)/num_threads;
     for (int t = 0; t < num_threads; ++t) {
-      split_stop = split_start + step_size;
-      threads.push_back(new Thread(t, p.objcnt, split_start, split_stop));
-      split_start = split_stop;
+      if (split_normal) {
+        double start, stop;
+        if (p.objsen == MIN) {
+          double gap = (start_point - stop_point);
+          stop = normal_values[num_threads][t]*gap + stop_point;
+          start = normal_values[num_threads][t+1]*gap + stop_point;
+        } else {
+          double gap = (stop_point - start_point);
+          start = normal_values[num_threads][t]*gap + start_point;
+          stop = normal_values[num_threads][t+1]*gap + start_point;
+        }
+        threads.push_back(new Thread(t, p.objcnt, start, stop));
+      } else{
+        split_stop = split_start + step_size;
+        threads.push_back(new Thread(t, p.objcnt, split_start, split_stop));
+        split_start = split_stop;
+      }
     }
   } else {
     // Not splitting.
