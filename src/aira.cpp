@@ -119,6 +119,7 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense);
  *
  * \pram pFilename The file name of the file holding the problem description
  * \param all A Solutions object into which all solutions will be placed
+ * \param infeasibles A Solutions object containing all infeasible problems
  * \param t A pointer to a Thread object that describes how this particular
  * thread should approach the problem.
  **/
@@ -126,7 +127,8 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense);
 /* Note that this function is templated. There's no evidence that this does
  * increase running time, but it's not like it decreases it either. */
 template<Sense sense>
-void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinalObjective = false);
+void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
+              Thread *t, bool onlyFinalObjective = false);
 
 namespace po = boost::program_options;
 
@@ -280,18 +282,19 @@ int main (int argc, char *argv[])
       delete[] share_limit;
       std::list<std::thread> threadList;
       Solutions here(p.objcnt);
+      Solutions infeas(p.objcnt);
       split = false; // Don't split here, we're just getting a limit
       if (p.objsen == MIN) {
         for(Thread* thread: threads) {
           thread->setNumObjectives(p.objcnt);
           threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
-              std::ref(here), thread, true);
+              std::ref(here), std::ref(infeas), thread, true);
         }
       } else {
         for(Thread* & thread: threads) {
           thread->setNumObjectives(p.objcnt);
           threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
-              std::ref(here), thread, true);
+              std::ref(here), std::ref(infeas), thread, true);
         }
       }
       for (auto& thread: threadList)
@@ -383,16 +386,17 @@ int main (int argc, char *argv[])
     delete[] share_bounds;
     delete[] share_limit;
   }
+  Solutions infeasibles(p.objcnt);
   std::list<std::thread> threadList;
   if (p.objsen == MIN) {
     for(Thread* thread: threads) {
       threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
-          std::ref(all), thread, false);
+          std::ref(all), std::ref(infeasibles), thread, false);
     }
   } else {
     for(Thread* & thread: threads) {
       threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
-          std::ref(all), thread, false);
+          std::ref(all), std::ref(infeasibles), thread, false);
     }
   }
   for (auto& thread: threadList)
@@ -675,7 +679,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 }
 
 template<Sense sense>
-void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinalObjective) {
+void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
+    Thread *t, bool onlyFinalObjective) {
   Env e;
   const bool sharing = (t->share_to != nullptr);
 #ifdef DEBUG
@@ -773,7 +778,11 @@ void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinal
 #endif
 
   /* Need to add a result to the list here*/
-  s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+  if (solnstat == CPXMIP_INFEASIBLE) {
+    infeasibles.insert(rhs, result, true);
+  } else {
+    s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+  }
   // Note that if we are splitting, we aren't sharing.
   if (split) {
     if (p.objsen == MIN)
@@ -949,7 +958,10 @@ void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinal
       std::cout << "Thread " << t->id;
       debug_mutex.unlock();
 #endif
-      relaxation = s.find(rhs, p.objsen);
+      // First check if it's infeasible
+      relaxation = infeasibles.find(rhs, p.objsen);
+      if (relaxation == nullptr)
+        relaxation = s.find(rhs, p.objsen);
       relaxed = (relaxation != nullptr);
       if (relaxed) {
         infeasible = relaxation->infeasible;
@@ -968,7 +980,11 @@ void optimise(const char * pFilename, Solutions & all, Thread *t, bool onlyFinal
 #endif
         infeasible = ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD));
         /* Store result */
-        s.insert(rhs, result, infeasible);
+        if (infeasible) {
+          infeasibles.insert(rhs, result, true);
+        } else {
+          s.insert(rhs, result, infeasible);
+        }
       }
 #ifdef DEBUG
       debug_mutex.lock();
