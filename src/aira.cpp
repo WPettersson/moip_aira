@@ -268,6 +268,9 @@ int main (int argc, char *argv[])
         num_threads_here = S[p.objcnt-1].size();
       std::list<Thread*> threads;
       int * ordering = new int[p.objcnt];
+      for (int c = 0; c < p.objcnt; ++c) {
+        ordering[c] = c;
+      }
       int ** share_from = new int*[p.objcnt] {nullptr};
       int ** share_to = new int*[p.objcnt] {nullptr};
       int ** share_bounds = new int*[p.objcnt] {nullptr};
@@ -373,6 +376,9 @@ int main (int argc, char *argv[])
   } else {
     // Not splitting.
     int * ordering = new int[p.objcnt];
+    for (int c = 0; c < p.objcnt; ++c) {
+      ordering[c] = c;
+    }
     int ** share_from = new int*[p.objcnt] {nullptr};
     int ** share_to = new int*[p.objcnt] {nullptr};
     int ** share_bounds = new int*[p.objcnt] {nullptr};
