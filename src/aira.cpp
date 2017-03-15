@@ -1259,19 +1259,6 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         std::cout << std::endl;
         debug_mutex.unlock();
 #endif
-        // If max/min have not been changed, then we have found zero new
-        // solutions at this level. Normally this would only happen if
-        // infcnt+1 == p.objcnt, but it can also happen if bounds on later
-        // objectives are changed from other threads.
-        if (sense == MIN) {
-          if (max[updated_objective] == (int)-CPX_INFBOUND) {
-            completed = true;
-          }
-        } else {
-          if (min[updated_objective] == (int)CPX_INFBOUND) {
-            completed = true;
-          }
-        }
         bool wait = false;
         Locking_Vars *lv = nullptr;
         if (t->locks && !completed)
