@@ -13,9 +13,11 @@ CFLAGS = $(DEBUG_FLAGS) -Wextra -std=c++11 -pedantic -I$(CPLEXDIR)/cplex/include
 CLNFLAGS = -L$(CPLEXDIR)/cplex/lib/x86-64_linux/static_pic/
 LIBS=-pthread -lcplex -lboost_program_options
 
+HASH=$(shell git rev-parse HEAD)
+
 all: executable
 
-executable: $(TARGETDIR)/aira
+executable: update-hash $(TARGETDIR)/aira
 
 OBJS = $(TARGETDIR)/symgroup.o $(TARGETDIR)/aira.o $(TARGETDIR)/solutions.o $(TARGETDIR)/result.o $(TARGETDIR)/problem.o $(TARGETDIR)/cluster.o $(TARGETDIR)/thread.o
 
@@ -28,7 +30,10 @@ clean:
 test: executable
 	@TARGETDIR=.$(TARGETDIR) make -C tests
 
-$(TARGETDIR)/aira: $(TARGETDIR) $(OBJS)
+update-hash:
+	@echo "const std::string HASH =\"$(HASH)\";" > $(SRC)/hash.h
+
+$(TARGETDIR)/aira: $(TARGETDIR) $(OBJS) $(TARGETDIR)/hash.h
 	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
 $(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h $(SRC)/problem.h
