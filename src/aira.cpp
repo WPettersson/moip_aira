@@ -1910,6 +1910,14 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         onwalk = false;
       }
     }
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << " at end of loop with objective_counter = ";
+          std::cout << objective_counter << std::endl;
+          debug_mutex.unlock();
+#endif
+
   }
 #ifdef DEBUG
           debug_mutex.lock();
