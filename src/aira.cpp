@@ -15,6 +15,7 @@
 #include "cluster.h"
 #include "problem.h"
 #include "env.h"
+#include "hash.h"
 #include "lockingvars.h"
 #include "symgroup.h"
 #include "result.h"
@@ -241,7 +242,7 @@ int main (int argc, char *argv[])
       return -ERR_CPLEX;
   }
 
-  outFile << std::endl << "Using improved algorithm" << std::endl;
+  outFile << std::endl << "Using improved algorithm at " << HASH << std::endl;
 
   /* Start the timer */
   starttime = clock();
