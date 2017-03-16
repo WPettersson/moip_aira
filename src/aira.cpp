@@ -1207,7 +1207,8 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
-          std::cout << "apparently partner found something" << std::endl;
+          std::cout << "apparently partner found something ";
+          std::cout << "on obj " << obj << std::endl;
           debug_mutex.unlock();
 #endif
                 infcnt = 0;
@@ -1827,7 +1828,11 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         depth_level++;
         depth = t->perm(depth_level);
         if (sense == MIN) {
-          if (sharing && t->share_limit[depth] && (*t->share_limit[depth] < max[depth])) {
+          // Use the shared limit if the shared limit is smaller than max, or
+          // if max is infinity, which happens if this thread found nothing
+          // last round but another thread did find something.
+          if (sharing && t->share_limit[depth] &&
+              ((*t->share_limit[depth] < max[depth]) || (max[depth] == (int) -CPX_INFBOUND))) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
@@ -1846,7 +1851,8 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           }
           max[depth] = (int) -CPX_INFBOUND;
         } else {
-          if (sharing && t->share_limit[depth] && ((*t->share_limit[depth] > min[depth]) )) {
+          if (sharing && t->share_limit[depth] &&
+              ((*t->share_limit[depth] > min[depth]) || (min[depth] == (int)CPX_INFBOUND))) {
 #ifdef DEBUG
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
