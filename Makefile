@@ -33,7 +33,7 @@ test: executable
 update-hash:
 	@echo "const std::string HASH =\"$(HASH)\";" > $(SRC)/hash.h
 
-$(TARGETDIR)/aira: $(TARGETDIR) $(OBJS) $(TARGETDIR)/hash.h
+$(TARGETDIR)/aira: $(TARGETDIR) $(OBJS)
 	$(CXX) $(OBJS) $(LIBS) -o $(TARGETDIR)/aira $(CLNFLAGS)
 
 $(TARGETDIR)/aira.o: $(SRC)/aira.cpp $(SRC)/env.h $(SRC)/result.h $(SRC)/solutions.h $(SRC)/symgroup.h $(SRC)/symgroup_extern.h $(SRC)/sense.h $(SRC)/problem.h
