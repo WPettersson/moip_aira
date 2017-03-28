@@ -144,7 +144,7 @@ void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result,
  * increase running time, but it's not like it decreases it either. */
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
-              Thread *t, bool onlyFinalObjective = false);
+              Thread *t);
 
 namespace po = boost::program_options;
 
@@ -308,12 +308,12 @@ int main (int argc, char *argv[])
   if (p.objsen == MIN) {
     for(Thread* thread: threads) {
       threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
-          std::ref(all), std::ref(infeasibles), thread, false);
+          std::ref(all), std::ref(infeasibles), thread);
     }
   } else {
     for(Thread* & thread: threads) {
       threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
-          std::ref(all), std::ref(infeasibles), thread, false);
+          std::ref(all), std::ref(infeasibles), thread);
     }
   }
   /* Free up memory as all we needed was a count of the number of objectives. */
@@ -626,64 +626,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
   return solnstat;
 }
 
-int solve_one(Env & e, Problem & p, int * result, double * rhs, int obj) {
-  int cur_numcols, status, solnstat;
-  double objval;
-  cur_numcols = CPXgetnumcols(e.env, e.lp);
-
-  status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[obj], p.objcoef[obj]);
-  if (status) {
-    std::cerr << "Failed to set objective." << std::endl;
-  }
-
-  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, rhs);
-  if (status) {
-    std::cerr << "Failed to change constraint srhs" << std::endl;
-  }
-
-  /* solve for current objective*/
-  status = CPXmipopt (e.env, e.lp);
-  if (status) {
-    std::cerr << "Failed to optimize LP." << std::endl;
-  }
-
-  // This is shared across threads, but it's an atomic integer (so read/writes
-  // are atomic) and thus we don't need a lock/mutex
-  ipcount++;
-
-  solnstat = CPXgetstat (e.env, e.lp);
-  if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-      return solnstat;
-  }
-  status = CPXgetobjval (e.env, e.lp, &objval);
-  if ( status ) {
-    std::cerr << "Failed to obtain objective value." << std::endl;
-    exit(0);
-  }
-  if ( objval > 1/p.mip_tolerance ) {
-    while (objval > 1/p.mip_tolerance) {
-      p.mip_tolerance /= 10;
-    }
-    CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
-    status = CPXmipopt (e.env, e.lp);
-    ipcount++;
-    solnstat = CPXgetstat (e.env, e.lp);
-    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-      return solnstat;
-    }
-    status = CPXgetobjval (e.env, e.lp, &objval);
-    if ( status ) {
-      std::cerr << "Failed to obtain objective value." << std::endl;
-      exit(0);
-    }
-  }
-  *result = round(objval);
-  return solnstat;
-}
-
 template<Sense sense>
 void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
-    Thread *t, bool onlyFinalObjective) {
+    Thread *t) {
   Env e;
   const bool sharing = (t->share_to != nullptr);
 #ifdef DEBUG
@@ -871,18 +816,6 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     //bool * found_any = new bool[p.objcnt] {false};
     infcnt = 0; /* Infeasible count*/
     inflast = false; /* Last iteration infeasible?*/
-
-    if (onlyFinalObjective && (objective_counter == p.objcnt-1)) {
-#ifdef DEBUG
-        debug_mutex.lock();
-        std::cout << "Thread " << t->id <<  " at final objective, ";
-        std::cout << ", objective_counter is " << objective_counter;
-        std::cout << std::endl;
-        debug_mutex.unlock();
-#endif
-        completed = true;
-        break;
-    }
 
     /* Set all constraints back to infinity*/
     for (int j_pre = 1; j_pre < p.objcnt; j_pre++) {
@@ -1994,18 +1927,18 @@ void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min)
       split_start = split_stop;
     }
   }
-  Solutions here(nObj);
+  Solutions here(p.objcnt);
   Solutions infeasibles(p.objcnt);
   std::list<std::thread> threadList;
   if (p.objsen == MIN) {
     for(Thread* thread: threads) {
       threadList.emplace_back(optimise<MIN>, p.filename(),
-          std::ref(here), std::ref(infeasibles), thread, false);
+          std::ref(here), std::ref(infeasibles), thread);
     }
   } else {
     for(Thread* & thread: threads) {
       threadList.emplace_back(optimise<MAX>, p.filename(),
-          std::ref(here), std::ref(infeasibles), thread, false);
+          std::ref(here), std::ref(infeasibles), thread);
     }
   }
   for (auto& thread: threadList)
@@ -2024,7 +1957,6 @@ void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min)
 void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
   if (nObj == 1) {
     int *min = new int[p.objcnt];
-    solve_one(e, p, min, p.rhs, nObj-1);
     get_limit(e, p, nObj - 1, p.rhs, min, p.objsen);
     s.push_back(min);
   } else {
