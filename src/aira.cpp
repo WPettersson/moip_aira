@@ -1751,13 +1751,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
+        if (sense == MIN) {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting rhs[" << objective << "] to " << max[objective]-1 <<std::endl;
           debug_mutex.unlock();
 #endif
-        if (sense == MIN) {
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
         } else {
