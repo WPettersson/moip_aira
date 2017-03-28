@@ -735,7 +735,10 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   if (solnstat == CPXMIP_INFEASIBLE) {
     infeasibles.insert(rhs, result, true);
   } else {
-    s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+    if (split)
+      all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+    else
+      s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
   }
   // Note that if we are splitting, we aren't sharing.
   if (split) {
@@ -902,8 +905,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
       // First check if it's infeasible
       relaxation = infeasibles.find(rhs, p.objsen);
-      if (relaxation == nullptr)
-        relaxation = s.find(rhs, p.objsen);
+      if (relaxation == nullptr) {
+        if (split) {
+          relaxation = all.find(rhs, p.objsen);
+        } else {
+          relaxation = s.find(rhs, p.objsen);
+        }
+      }
       relaxed = (relaxation != nullptr);
       if (relaxed) {
         infeasible = relaxation->infeasible;
@@ -925,7 +933,11 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         if (infeasible) {
           infeasibles.insert(rhs, result, true);
         } else {
-          s.insert(rhs, result, infeasible);
+          if (split) {
+            all.insert(rhs, result, infeasible);
+          } else {
+            s.insert(rhs, result, infeasible);
+          }
         }
       }
 #ifdef DEBUG
