@@ -6,9 +6,9 @@
 #include <iostream>
 #endif
 
-Thread::Thread(int id_, int nObj_, const int * perm__, int ** share_to_, int ** share_from_,
+Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** share_from_,
     int ** share_bounds_, int ** share_limit_, Locking_Vars ** locks_, bool partnered_) :
-  nObj(nObj_), id(id_), partnered(partnered_), split_start(0)//, split_stop(0)
+  nObj_(nObj), id(id_), partnered(partnered_), split_start(0)//, split_stop(0)
 {
   split_stop = 0;
   share_to = new int*[nObj];
@@ -57,76 +57,77 @@ Thread::Thread(int id_, int nObj_, const int * perm__, int ** share_to_, int ** 
 
 void Thread::setNumObjectives(int newObj) {
   int * newPerm = new int[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     newPerm[i] = perm_[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     newPerm[i] = i;
   }
   delete[] perm_;
   perm_ = newPerm;
 
   int ** new_share_to = new int*[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     new_share_to[i] = share_to[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     new_share_to[i] = nullptr;
   }
   delete[] share_to;
   share_to = new_share_to;
 
   int ** new_share_from = new int*[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     new_share_from[i] = share_from[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     new_share_from[i] = nullptr;
   }
   delete[] share_from;
   share_from = new_share_from;
 
   int ** new_share_bounds = new int*[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     new_share_bounds[i] = share_bounds[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     new_share_bounds[i] = nullptr;
   }
   delete[] share_bounds;
   share_bounds = new_share_bounds;
 
   int ** new_share_limit = new int*[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     new_share_limit[i] = share_limit[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     new_share_limit[i] = nullptr;
   }
   delete[] share_limit;
   share_limit = new_share_limit;
 
   Locking_Vars** new_locks = new Locking_Vars*[newObj];
-  for(int i = 0; i < nObj; ++i) {
+  for(int i = 0; i < nObj_; ++i) {
     new_locks[i] = locks[i];
   }
-  for (int i = nObj; i < newObj; ++i) {
+  for (int i = nObj_; i < newObj; ++i) {
     new_locks[i] = nullptr;
   }
   delete[] locks;
   locks = new_locks;
 
-  nObj = newObj;
+  nObj_ = newObj;
 }
 
 
 
-Thread::Thread(int id_, int nObj, double split_start_, double split_stop_) :
+Thread::Thread(int id_, int nObj, int totalObjCount, double split_start_, double split_stop_) :
+  nObj_(nObj),
   id(id_), share_to(nullptr), share_from(nullptr), locks(nullptr), split_start(split_start_),
   split_stop(split_stop_)
 {
-  perm_ = new int[nObj];
-  for(int i = 0; i < nObj; ++i) {
+  perm_ = new int[totalObjCount];
+  for(int i = 0; i < totalObjCount; ++i) {
     perm_[i] = i; // If splitting, all threads use a common permutation
   }
 }

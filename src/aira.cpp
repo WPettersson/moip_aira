@@ -101,16 +101,31 @@ std::atomic<int> ipcount;
  * \param rhs An array of doubles holding the right hand side of the problem
  * \param perm_id The index of the permutation which denotes the hierarchy or
  * ordering of the objectives, from most significant to least.
+ * \param t A thread object, which itself includes the permutation, as well as
+ * how many objectives to optimise.
+ *
+ * Note that objectives that are not optimised will still be calculated, they
+ * just won't be optimised in any way.
  */
 int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
 int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
 
+/**
+ * Sets up the optimisation based on splitting the value of the final
+ * objective.
+ * \param e The relevant Env object
+ * \param p The relevant Problem object
+ * \param s A list in which to store solutions.
+ * \param obj The objective to be optimised
+ */
+void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj);
 
 /**
  * Finds out the limit (either maximum or minimum) of one objective in the
  * problem. This is only used to set up the splitting algorithm correctly.
  */
-int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense);
+void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result,
+    const Sense sense);
 
 /**
  * Optimise!
@@ -259,120 +274,15 @@ int main (int argc, char *argv[])
   completed = false;
 
   std::list<Locking_Vars*> locking_var_list;
-  double start_point, stop_point;
-  if (split) {
-    // Get start point by running 1 iteration of our algorithm on first n-1
-    // objectives only.
-    {
-      int num_threads_here = num_threads;
-      if (num_threads_here > S[p.objcnt-1].size())
-        num_threads_here = S[p.objcnt-1].size();
-      std::list<Thread*> threads;
-      int * ordering = new int[p.objcnt];
-      for (int c = 0; c < p.objcnt; ++c) {
-        ordering[c] = c;
-      }
-      int ** share_from = new int*[p.objcnt] {nullptr};
-      int ** share_to = new int*[p.objcnt] {nullptr};
-      int ** share_bounds = new int*[p.objcnt] {nullptr};
-      int ** share_limit = new int*[p.objcnt] {nullptr};
-      Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
-      Cluster c(num_threads_here, p.objcnt-1, p.objsen, spread, p.objcnt-1, ordering,
-          share_from, share_to, share_bounds, share_limit, threads, lvs);
-      delete[] ordering;
-      delete[] share_to;
-      delete[] share_from;
-      delete[] share_bounds;
-      delete[] share_limit;
-      std::list<std::thread> threadList;
-      Solutions here(p.objcnt);
-      Solutions infeas(p.objcnt);
-      split = false; // Don't split here, we're just getting a limit
-      if (p.objsen == MIN) {
-        for(Thread* thread: threads) {
-          thread->setNumObjectives(p.objcnt);
-          threadList.emplace_back(optimise<MIN>, pFilename.c_str(),
-              std::ref(here), std::ref(infeas), thread, true);
-        }
-      } else {
-        for(Thread* & thread: threads) {
-          thread->setNumObjectives(p.objcnt);
-          threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
-              std::ref(here), std::ref(infeas), thread, true);
-        }
-      }
-      for (auto& thread: threadList)
-        thread.join();
-      split = true;
-      completed = false;
-      for (auto lv: locking_var_list)
-        delete lv;
-      if (p.objsen == MAX) {
-        start_point = (int) CPX_INFBOUND;
-        for(auto r: here) {
-          if (r->infeasible)
-            continue;
-          int last = r->result[p.objcnt-1];
-          if (last < start_point)
-            start_point = last;
-        }
-      } else {
-        start_point = (int) -CPX_INFBOUND;
-        for(auto r: here) {
-          if (r->infeasible)
-            continue;
-          int last = r->result[p.objcnt-1];
-          if (last > start_point)
-            start_point = last;
-        }
-      }
-    }
-    stop_point = get_limit(e, p, p.objcnt-1, p.rhs, p.objsen);
-#ifdef DEBUG
-          debug_mutex.lock();
-          std::cout << "Thread m found start point " << start_point;
-          std::cout << " and stop point " << stop_point << std::endl;
-          debug_mutex.unlock();
-#endif
-  }
-  /* Free up memory as all we needed was a count of the number of objectives. */
-  if ( e.lp != NULL ) {
-     status = CPXfreeprob (e.env, &e.lp);
-     if ( status ) {
-       std::cerr << "CPXfreeprob failed." << std::endl;
-     }
-  }
-  if ( e.env != NULL ) {
-     status = CPXcloseCPLEX (&e.env);
-
-     if ( status ) {
-       std::cerr << "Could not close CPLEX environment." << std::endl;
-     }
-  }
 
   std::list<Thread*> threads;
   if (split) {
-    double split_start = start_point;
-    double split_stop;
-    double step_size = (stop_point - start_point)/num_threads;
-    for (int t = 0; t < num_threads; ++t) {
-      if (split_normal) {
-        double start, stop;
-        if (p.objsen == MIN) {
-          double gap = (start_point - stop_point);
-          stop = normal_values[num_threads][t]*gap + stop_point;
-          start = normal_values[num_threads][t+1]*gap + stop_point;
-        } else {
-          double gap = (stop_point - start_point);
-          start = normal_values[num_threads][t]*gap + start_point;
-          stop = normal_values[num_threads][t+1]*gap + start_point;
-        }
-        threads.push_back(new Thread(t, p.objcnt, start, stop));
-      } else{
-        split_stop = split_start + step_size;
-        threads.push_back(new Thread(t, p.objcnt, split_start, split_stop));
-        split_start = split_stop;
-      }
+    std::list<int *> sols;
+    // Note that split_setup will farm out jobs to threads and everything.
+    split_setup(e, p, sols, p.objcnt);
+    double * lp = new double[p.objcnt];
+    for(auto s : sols) {
+      all.insert(lp, s, false /* infeasible */);
     }
   } else {
     // Not splitting.
@@ -405,6 +315,20 @@ int main (int argc, char *argv[])
       threadList.emplace_back(optimise<MAX>, pFilename.c_str(),
           std::ref(all), std::ref(infeasibles), thread, false);
     }
+  }
+  /* Free up memory as all we needed was a count of the number of objectives. */
+  if ( e.lp != NULL ) {
+     status = CPXfreeprob (e.env, &e.lp);
+     if ( status ) {
+       std::cerr << "CPXfreeprob failed." << std::endl;
+     }
+  }
+  if ( e.env != NULL ) {
+     status = CPXcloseCPLEX (&e.env);
+
+     if ( status ) {
+       std::cerr << "Could not close CPLEX environment." << std::endl;
+     }
   }
   for (auto& thread: threadList)
     thread.join();
@@ -531,7 +455,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm) {
   return solnstat;
 }
 
-int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense) {
+void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result, const Sense sense) {
 
   int cur_numcols, status, solnstat;
   double objval;
@@ -575,11 +499,7 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense) {
 
   solnstat = CPXgetstat (e.env, e.lp);
   if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-    if (sense == MIN) {
-      return (int)CPX_INFBOUND;
-    } else {
-      return (int)-CPX_INFBOUND;
-    }
+    return;
   }
   status = CPXgetobjval (e.env, e.lp, &objval);
   if ( status ) {
@@ -595,11 +515,7 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense) {
     ipcount++;
     solnstat = CPXgetstat (e.env, e.lp);
     if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-      if (sense == MIN) {
-        return (int)CPX_INFBOUND;
-      } else {
-        return (int)-CPX_INFBOUND;
-      }
+      return;
     }
     status = CPXgetobjval (e.env, e.lp, &objval);
     if ( status ) {
@@ -609,7 +525,19 @@ int get_limit(Env & e, Problem & p, int obj, double * rhs, const Sense sense) {
   }
   delete[] srhs;
 
-  return (int)objval;
+  // Get the solution vector
+  double * soln = new double[cur_numcols];
+  CPXgetx(e.env, e.lp, soln, 0, cur_numcols - 1);
+  // Now run through the rest of the objectives.
+  for (int j = 0; j < p.objcnt; j++) {
+    double res = 0;
+    for(int i = 0; i < cur_numcols; ++i) {
+      res += p.objcoef[j][i] * soln[i];
+    }
+    result[j] = round(res);
+  }
+  delete[] soln;
+  return;
 }
 
 int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
@@ -627,7 +555,7 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
   cur_numcols = CPXgetnumcols(e.env, e.lp);
 
   // TODO Permutation applies here.
-  for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
+  for (int j_preimage = 0; j_preimage < t->nObj(); j_preimage++) {
     int j = t->perm(j_preimage);
     status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
     if (status) {
@@ -679,9 +607,77 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
     //p.result[j] = srhs[j] = round(objval);
     result[j] = srhs[j] = round(objval);
   }
+  // Get the solution vector
+  double * soln = new double[cur_numcols];
+  CPXgetx(e.env, e.lp, soln, 0, cur_numcols - 1);
+  // Now run through the rest of the objectives.
+  for (int j_pre = t->nObj(); j_pre < p.objcnt; j_pre++) {
+    int j = t->perm(j_pre);
+    double res = 0;
+    for(int i = 0; i < cur_numcols; ++i) {
+      res += p.objcoef[j][i] * soln[i];
+    }
+    result[j] = round(res);
+  }
+  delete[] soln;
 
   delete[] srhs;
 
+  return solnstat;
+}
+
+int solve_one(Env & e, Problem & p, int * result, double * rhs, int obj) {
+  int cur_numcols, status, solnstat;
+  double objval;
+  cur_numcols = CPXgetnumcols(e.env, e.lp);
+
+  status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[obj], p.objcoef[obj]);
+  if (status) {
+    std::cerr << "Failed to set objective." << std::endl;
+  }
+
+  status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, rhs);
+  if (status) {
+    std::cerr << "Failed to change constraint srhs" << std::endl;
+  }
+
+  /* solve for current objective*/
+  status = CPXmipopt (e.env, e.lp);
+  if (status) {
+    std::cerr << "Failed to optimize LP." << std::endl;
+  }
+
+  // This is shared across threads, but it's an atomic integer (so read/writes
+  // are atomic) and thus we don't need a lock/mutex
+  ipcount++;
+
+  solnstat = CPXgetstat (e.env, e.lp);
+  if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+      return solnstat;
+  }
+  status = CPXgetobjval (e.env, e.lp, &objval);
+  if ( status ) {
+    std::cerr << "Failed to obtain objective value." << std::endl;
+    exit(0);
+  }
+  if ( objval > 1/p.mip_tolerance ) {
+    while (objval > 1/p.mip_tolerance) {
+      p.mip_tolerance /= 10;
+    }
+    CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+    status = CPXmipopt (e.env, e.lp);
+    ipcount++;
+    solnstat = CPXgetstat (e.env, e.lp);
+    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+      return solnstat;
+    }
+    status = CPXgetobjval (e.env, e.lp, &objval);
+    if ( status ) {
+      std::cerr << "Failed to obtain objective value." << std::endl;
+      exit(0);
+    }
+  }
+  *result = round(objval);
   return solnstat;
 }
 
@@ -748,7 +744,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     rhs[i] = p.rhs[i];
   }
   if (split) {
-    rhs[t->perm(p.objcnt-1)] = t->split_start;
+ #ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " splitting on ";
+          std::cout << t->perm(t->nObj()-1) << std::endl;
+          debug_mutex.unlock();
+#endif
+    rhs[t->perm(t->nObj()-1)] = t->split_start;
   }
 
 #ifdef FINETIMING
@@ -861,7 +863,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
    * onwalk is true if the current active depth (as indicated by the depth
    * variable) was just increased.
    */
-  for (int objective_counter = 1; objective_counter < p.objcnt; objective_counter++) {
+  for (int objective_counter = 1; objective_counter < t->nObj(); objective_counter++) {
     int objective = t->perm(objective_counter);
     int depth_level = 1; /* Track current "recursion" depth */
     int depth = t->perm(depth_level); /* Track depth objective */
@@ -908,7 +910,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       }
     }
     if (split) {
-        rhs[t->perm(p.objcnt-1)] = t->split_start;
+        rhs[t->perm(t->nObj()-1)] = t->split_start;
     }
     /* Set rhs of current depth */
     if (sense == MIN) {
@@ -931,7 +933,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     if (split) {
       // check if we cross midpoint
       if (sense == MIN) {
-        if (rhs[p.objcnt-1] < t->split_stop) {
+        if (rhs[t->nObj()-1] < t->split_stop) {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " reached split_stop";
@@ -941,7 +943,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           break;
         }
       } else {
-        if (rhs[p.objcnt-1] > t->split_stop) {
+        if (rhs[t->nObj()-1] > t->split_stop) {
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " reached split_stop";
@@ -1023,7 +1025,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           // check if we cross midpoint
           if (infcnt == p.objcnt - 2) {
             if (sense == MIN) {
-              if (rhs[p.objcnt-1] < t->split_stop) {
+              if (rhs[t->nObj()-1] < t->split_stop) {
                 infeasible = true;
 #ifdef DEBUG
                 debug_mutex.lock();
@@ -1033,7 +1035,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
               }
             } else {
-              if (rhs[p.objcnt-1] > t->split_stop) {
+              if (rhs[t->nObj()-1] > t->split_stop) {
                 infeasible = true;
 #ifdef DEBUG
                 debug_mutex.lock();
@@ -1746,7 +1748,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         }
         /* If splitting, use split_start and not +/- infinity */
         if (split) {
-          rhs[p.objcnt-1] = t->split_start;
+          rhs[t->nObj()-1] = t->split_start;
         }
         /* In the case of a minimisation problem
          * set current level to max objective function value  -1 else set
@@ -1958,4 +1960,105 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   delete[] rhs;
   delete[] min;
   delete[] max;
+}
+
+void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min) {
+  double start_point, stop_point;
+  if (p.objsen == MIN) {
+    start_point = max;
+    stop_point = min;
+  } else {
+    start_point = min;
+    stop_point = max;
+  }
+  double split_start = start_point;
+  double split_stop;
+  double step_size = (stop_point - start_point)/num_threads;
+  std::list<Thread *> threads;
+  for (int t = 0; t < num_threads; ++t) {
+    if (split_normal) {
+      double start, stop;
+      if (p.objsen == MIN) {
+        double gap = (start_point - stop_point);
+        stop = normal_values[num_threads][t]*gap + stop_point;
+        start = normal_values[num_threads][t+1]*gap + stop_point;
+      } else {
+        double gap = (stop_point - start_point);
+        start = normal_values[num_threads][t]*gap + start_point;
+        stop = normal_values[num_threads][t+1]*gap + start_point;
+      }
+      threads.push_back(new Thread(t, nObj, p.objcnt, start, stop));
+    } else {
+      split_stop = split_start + step_size;
+      threads.push_back(new Thread(t, nObj, p.objcnt, split_start, split_stop));
+      split_start = split_stop;
+    }
+  }
+  Solutions here(nObj);
+  Solutions infeasibles(p.objcnt);
+  std::list<std::thread> threadList;
+  if (p.objsen == MIN) {
+    for(Thread* thread: threads) {
+      threadList.emplace_back(optimise<MIN>, p.filename(),
+          std::ref(here), std::ref(infeasibles), thread, false);
+    }
+  } else {
+    for(Thread* & thread: threads) {
+      threadList.emplace_back(optimise<MAX>, p.filename(),
+          std::ref(here), std::ref(infeasibles), thread, false);
+    }
+  }
+  for (auto& thread: threadList)
+    thread.join();
+  for(auto sol: here) {
+    if (sol->infeasible)
+      continue;
+    int * n = new int[p.objcnt];
+    for(int i = 0; i < p.objcnt; ++i) {
+      n[i] = sol->result[i];
+    }
+    s.push_back(n);
+  }
+}
+
+void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
+  if (nObj == 1) {
+    int *min = new int[p.objcnt];
+    solve_one(e, p, min, p.rhs, nObj-1);
+    get_limit(e, p, nObj - 1, p.rhs, min, p.objsen);
+    s.push_back(min);
+  } else {
+#ifdef DEBUG
+    std::cout << "Splitting on " << nObj << " objectives ... ";
+#endif
+    std::list<int *> sols;
+    split_setup(e, p, sols, nObj - 1);
+    int * res = new int[p.objcnt];
+    int biggest, smallest;
+    if (p.objsen == MIN) {
+      get_limit(e, p, nObj-1, p.rhs, res, p.objsen);
+      smallest = res[nObj - 1];
+      biggest = (int)-CPX_INFBOUND;
+      for(int * sol: sols) {
+        if (sol[nObj-1] > biggest) {
+          biggest = sol[nObj-1];
+        }
+      }
+    } else {
+      get_limit(e, p, nObj-1, p.rhs, res, p.objsen);
+      biggest = res[nObj - 1];
+      smallest = (int)CPX_INFBOUND;
+      for(int * sol: sols) {
+        if (sol[nObj-1] < smallest) {
+          smallest = sol[nObj-1];
+        }
+      }
+    }
+    delete[] res;
+#ifdef DEBUG
+    std::cout << " found range [" << smallest << ", " << biggest << "]";
+    std::cout << " for objective " << (nObj-1) << std::endl;
+#endif
+    split_optimise(p, s, nObj, biggest, smallest);
+  }
 }
