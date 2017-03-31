@@ -6,7 +6,7 @@ SET(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake_modules/")
 # We need to determine threading flags *before* testing for C++11 std::thread.
 FIND_PACKAGE(Threads REQUIRED)
 IF(NOT Threads_FOUND)
-  MESSAGE(FATAL_ERROR "Regina requires threading support.")
+  MESSAGE(FATAL_ERROR "moip_aira requires threading support.")
 ENDIF(NOT Threads_FOUND)
 IF(CMAKE_COMPILER_IS_GNUCXX)
   # The FindThreads module picks up -lpthread, not -pthread.
@@ -14,7 +14,6 @@ IF(CMAKE_COMPILER_IS_GNUCXX)
   # under g++; otherwise it builds but throws an exception at runtime.
   SET(CMAKE_CXX_FLAGS "-pthread ${CMAKE_CXX_FLAGS}")
 ENDIF(CMAKE_COMPILER_IS_GNUCXX)
-
 
 INCLUDE(CheckCXX11Features)
 SET(HAVE_CXX11_FEATURES TRUE)
@@ -27,15 +26,19 @@ IF(NOT HAVE_CXX11_FEATURES)
 ENDIF()
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CXX11_SWITCH}")
 
-
-SET(CPLEX_ROOT "/home/enigma/opt/ibm/ILOG/CPLEX_Studio127/")
 FIND_PACKAGE(CPLEX REQUIRED)
 
 INCLUDE_DIRECTORIES(${CPLEX_INCLUDE_DIR})
 LINK_DIRECTORIES(${CPLEX_LIBRARY_PATH})
 
-FIND_PACKAGE(Boost COMPONENTS program_options)
+FIND_PACKAGE(Boost 1.57.0 COMPONENTS program_options)
 INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIR})
+
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
 ADD_SUBDIRECTORY(src)
 
+IF(TESTSUITE)
+  ENABLE_TESTING()
+  ADD_SUBDIRECTORY(${PROJECT_SOURCE_DIR}/Examples)
+ENDIF(TESTSUITE)

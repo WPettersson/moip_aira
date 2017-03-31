@@ -1,5 +1,5 @@
 src/symgroup.cpp
 src/symgroup_extern.h
-src/hash.h
+src/hash.cpp
 debug/*
 build/*
