@@ -1699,7 +1699,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         if (sense == MIN) {
 #ifdef DEBUG
           debug_mutex.lock();
-          std::cout << "Thread " << t->id << " ";
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << objective << "] to " << max[objective]-1 <<std::endl;
           debug_mutex.unlock();
 #endif
@@ -1723,7 +1723,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       } else if (inflast && infcnt != objective_counter) {
 #ifdef DEBUG
           debug_mutex.lock();
-          std::cout << "Thread " << t->id << " ";
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "increasing depth from " << depth_level << std::endl;
           debug_mutex.unlock();
 #endif
@@ -1864,7 +1864,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     }
 #ifdef DEBUG
           debug_mutex.lock();
-          std::cout << "Thread " << t->id << " ";
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << " at end of loop with objective_counter = ";
           std::cout << objective_counter << std::endl;
           debug_mutex.unlock();
@@ -1873,7 +1873,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   }
 #ifdef DEBUG
           debug_mutex.lock();
-          std::cout << "Thread " << t->id << " ";
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "done!" << std::endl;
           debug_mutex.unlock();
 #endif
