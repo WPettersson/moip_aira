@@ -1983,26 +1983,24 @@ void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
       get_limit(e, p, nObj-1, p.rhs, res, p.objsen);
       smallest = res[nObj - 1];
       biggest = (int)-CPX_INFBOUND;
-      if (sols.size() > 1) {
-        for(int * sol: sols) {
-          if (sol[nObj-1] > biggest) {
-            biggest = sol[nObj-1];
-          }
+      for(int * sol: sols) {
+        if (sol[nObj-1] > biggest) {
+          biggest = sol[nObj-1];
         }
-      } else {
+      }
+      if (biggest == smallest) {
         biggest = (int)CPX_INFBOUND;
       }
     } else {
       get_limit(e, p, nObj-1, p.rhs, res, p.objsen);
       biggest = res[nObj - 1];
       smallest = (int)CPX_INFBOUND;
-      if (sols.size() > 1) {
-        for(int * sol: sols) {
-          if (sol[nObj-1] < smallest) {
-            smallest = sol[nObj-1];
-          }
+      for(int * sol: sols) {
+        if (sol[nObj-1] < smallest) {
+          smallest = sol[nObj-1];
         }
-      } else {
+      }
+      if (biggest == smallest) {
         smallest = (int)-CPX_INFBOUND;
       }
     }
