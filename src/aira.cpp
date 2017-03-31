@@ -15,7 +15,6 @@
 #include "cluster.h"
 #include "problem.h"
 #include "env.h"
-#include "hash.h"
 #include "lockingvars.h"
 #include "symgroup.h"
 #include "result.h"
@@ -23,12 +22,11 @@
 #include "errors.h"
 #include "thread.h"
 
-//#define DEBUG
-//#define FINETIMING
-
 #ifdef DEBUG
 std::mutex debug_mutex;
 #endif
+
+extern std::string HASH;
 
 int num_threads;
 int cplex_threads;
