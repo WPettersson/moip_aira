@@ -966,7 +966,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       if (split) {
         if (!infeasible) {
           // check if we cross midpoint
-          if (infcnt == p.objcnt - 2) {
+          if (infcnt == t->nObj() - 2) {
             if (sense == MIN) {
               if (rhs[t->nObj()-1] < t->split_stop) {
                 infeasible = true;
