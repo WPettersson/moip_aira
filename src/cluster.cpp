@@ -53,6 +53,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
     for(int d = 1; d < nObj; ++d) {
       std::cout << "," << ordering[d];
     }
+    std::cout << ", " << nThreads << " threads left,";
     std::cout << " and " << nObjLeft << " objectives left.";
     std::cout << std::endl;
 #endif
