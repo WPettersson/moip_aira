@@ -77,8 +77,9 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
     int ** new_bounds = new int*[nObj] {nullptr};
     int ** new_limit = new int*[nObj] {nullptr};
     int num_sub_clusters = (ind < nThreads) ? ind : nThreads;
+    int index = nObjLeft - 1;
     for(int j = 0; j < num_sub_clusters; ++j) {
-      int pos = my_ordering[nObjLeft - j - 1];
+      int pos = my_ordering[index];
       new_shares[pos] = new int;
       new_bounds[pos] = new int;
       new_limit[pos] = new int;
@@ -91,6 +92,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
         *new_bounds[pos] = INFBOUND;
         *new_limit[pos] = -INFBOUND;
       }
+      index = (index + 1) % nObjLeft;
     }
 
     if (spread_threads) {
