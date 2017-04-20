@@ -133,7 +133,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           my_ordering[c] = my_ordering[c+1];
         }
         my_ordering[nObjLeft - 1] = first;
-
+        locks[pos] = nullptr;
       }
       if (perCluster > 0) {
         for( ; i < nObjLeft ; ++i) {
@@ -172,7 +172,8 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
             my_ordering[c] = my_ordering[c+1];
           }
           my_ordering[nObjLeft - 1] = first;
-          }
+          locks[pos] = nullptr;
+        }
       }
     } else { // grouping threads "near" each other
       int threads_remaining = nThreads;
@@ -214,6 +215,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           my_ordering[c] = my_ordering[c+1];
         }
         my_ordering[nObjLeft - 1] = first;
+        locks[pos] = nullptr;
       }
     }
     delete[] my_ordering;
