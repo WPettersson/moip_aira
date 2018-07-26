@@ -1,13 +1,20 @@
-
+ADD_CUSTOM_COMMAND(
+  OUTPUT symgroup.cpp
+  COMMAND "python" ARGS "${CMAKE_CURRENT_SOURCE_DIR}/mk_symgroup.py"
+)
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 SET(SOURCES
   aira.cpp
   cluster.cpp
   problem.cpp
   result.cpp
   solutions.cpp
-  symgroup.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/symgroup.cpp
   thread.cpp
   hash.cpp)
+
+
 
 FILE(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mkhash.sh"
   "GIT_HASH=$(cd ${CMAKE_CURRENT_SOURCE_DIR} && git rev-parse HEAD)\necho \"#include <string>\nstd::string HASH = \\\"\${GIT_HASH}\\\";\" > \"\${1}/hash.cpp\""
