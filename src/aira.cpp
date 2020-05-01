@@ -424,8 +424,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm) {
       std::cerr << "Failed to obtain objective value." << std::endl;
       exit(0);
     }
-    if ( objval > 1/p.mip_tolerance ) {
-      while (objval > 1/p.mip_tolerance) {
+    if ( abs(objval) > 1/p.mip_tolerance ) {
+      while (abs(objval) > 1/p.mip_tolerance) {
         p.mip_tolerance /= 10;
       }
       CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
@@ -502,8 +502,8 @@ void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result, const 
     std::cerr << "Failed to obtain objective value." << std::endl;
     exit(0);
   }
-  if ( objval > 1/p.mip_tolerance ) {
-    while (objval > 1/p.mip_tolerance) {
+  if ( abs(objval) > 1/p.mip_tolerance ) {
+    while (abs(objval) > 1/p.mip_tolerance) {
       p.mip_tolerance /= 10;
     }
     CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
@@ -582,8 +582,8 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
       std::cerr << "Failed to obtain objective value." << std::endl;
       exit(0);
     }
-    if ( objval > 1/p.mip_tolerance ) {
-      while (objval > 1/p.mip_tolerance) {
+    if ( abs(objval) > 1/p.mip_tolerance ) {
+      while (abs(objval) > 1/p.mip_tolerance) {
         p.mip_tolerance /= 10;
       }
       CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
