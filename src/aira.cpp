@@ -236,6 +236,11 @@ int main (int argc, char *argv[])
 
   Problem p(pFilename.c_str(), e);
 
+  if (p.objcnt >= maxObjCount) {
+    std::cerr << "Error: This version of moip_aira has been compiled to support at most " << maxObjCount << " objectives." << std::endl;
+    return -ERR_AIRA;
+  }
+
   /* Set to deterministic parallel mode */
   status=CPXsetintparam(e.env, CPXPARAM_Parallel, CPX_PARALLEL_DETERMINISTIC);
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import os
+import sys
+
 from math import factorial    # size of symmetric group
 
 
@@ -8,6 +10,11 @@ from math import factorial    # size of symmetric group
 # to order N
 N = 5
 
+if len(sys.argv) >= 2:
+    try:
+        N = int(sys.argv[1])
+    except ValueError:
+        pass
 
 if not os.getcwd().endswith("/src"):
     # Assume being run as src/mk_symgroup.py
@@ -64,4 +71,5 @@ with open("symgroup.cpp", "w") as hfile:
 """)
 
 with open("symgroup_extern.h", "w") as hfile:
+    hfile.write("const int maxObjCount = %d;\n" % (N))
     hfile.write("extern const SymGroup S[%d];\n" % (N + 1))
