@@ -106,7 +106,6 @@ std::atomic<int> ipcount;
  * just won't be optimised in any way.
  */
 int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
-int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm);
 
 /**
  * Sets up the optimisation based on splitting the value of the final
@@ -386,75 +385,6 @@ int main (int argc, char *argv[])
   return (status);
 }
 
-/* Solve CLMOIP and return solution status */
-int solve(Env & e, Problem & p, int * result, double * rhs, const int * perm) {
-
-  int cur_numcols, status, solnstat;
-  double objval;
-  double * srhs;
-  srhs = new double[p.objcnt];
-
-  memcpy(srhs, rhs, p.objcnt * sizeof(double));
-
-  cur_numcols = CPXgetnumcols(e.env, e.lp);
-
-  for (int j_preimage = 0; j_preimage < p.objcnt; j_preimage++) {
-    int j = perm[j_preimage];
-    status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
-    if (status) {
-      std::cerr << "Failed to set objective." << std::endl;
-    }
-
-    status = CPXchgrhs (e.env, e.lp, p.objcnt, p.conind, srhs);
-    if (status) {
-      std::cerr << "Failed to change constraint srhs" << std::endl;
-    }
-
-    /* solve for current objective*/
-    status = CPXmipopt (e.env, e.lp);
-    if (status) {
-      std::cerr << "Failed to optimize LP." << std::endl;
-    }
-
-    // This is shared across threads, but it's an atomic integer (so read/writes
-    // are atomic) and thus we don't need a lock/mutex
-    ipcount++;
-
-    solnstat = CPXgetstat (e.env, e.lp);
-    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-       break;
-    }
-    status = CPXgetobjval (e.env, e.lp, &objval);
-    if ( status ) {
-      std::cerr << "Failed to obtain objective value." << std::endl;
-      exit(0);
-    }
-    if ( abs(objval) > 1/p.mip_tolerance ) {
-      while (abs(objval) > 1/p.mip_tolerance) {
-        p.mip_tolerance /= 10;
-      }
-      CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
-      status = CPXmipopt (e.env, e.lp);
-      ipcount++;
-      solnstat = CPXgetstat (e.env, e.lp);
-      if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-        break;
-      }
-      status = CPXgetobjval (e.env, e.lp, &objval);
-      if ( status ) {
-        std::cerr << "Failed to obtain objective value." << std::endl;
-        exit(0);
-      }
-    }
-
-    //p.result[j] = srhs[j] = round(objval);
-    result[j] = srhs[j] = round(objval);
-  }
-
-  delete[] srhs;
-
-  return solnstat;
-}
 
 void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result, const Sense sense) {
 
