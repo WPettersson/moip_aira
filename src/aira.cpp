@@ -181,7 +181,7 @@ int main (int argc, char *argv[])
      "If splitting, assume a normal distribution for objective values\n"
      "Optional, defaults to False.")
     ("spread,s",
-     po::value<bool>(&spread)->default_value(true),
+     po::bool_switch(&spread)->default_value(true),
      "Spread threads out over various subgroups of the symmetries (as opposed to clustering inside subgroups).\n"
      "Optional, defaults to True")
     ("threads,t",
