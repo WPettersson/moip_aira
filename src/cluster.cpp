@@ -20,7 +20,7 @@
 Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
     int nObjLeft, int * ordering, int ** share_to_, int ** share_from_,
     int ** share_bounds_, int ** share_limit_, std::list<Thread*> & threads,
-    Locking_Vars ** locks) {
+    Locking_Vars ** locks, bool dive) {
   if (nThreads == 1) {
     // Build perm
     int * perm = new int[nObj];
@@ -42,7 +42,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
     bool has_partner = (nObjLeft == 1);
     // Build thread
     Thread *t = new Thread(threads.size(), nObj, perm, share_to_, share_from_,
-        share_bounds_, share_limit_, locks, has_partner);
+        share_bounds_, share_limit_, locks, has_partner, dive);
     threads.push_back(t);
 //    threads.push_back( new Thread(threads.size(), nObj, perm, shared_limits));
   } else {
@@ -122,7 +122,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           }
         }
         Cluster(perCluster + 1, nObj, sense, spread_threads, nObjLeft - 1,
-            my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+            my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks, dive);
         share_to[pos] = old_share_to;
         share_bounds[pos] = old_share_bounds;
         share_limit[pos] = old_share_limit;
@@ -161,7 +161,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
             }
           }
           Cluster(perCluster, nObj, sense, spread_threads, nObjLeft - 1,
-              my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+              my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks, dive);
           share_to[pos] = old_share_to;
           share_bounds[pos] = old_share_bounds;
           share_limit[pos] = old_share_limit;
@@ -203,7 +203,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           }
         }
         Cluster(threads_to_use, nObj, sense, spread_threads, nObjLeft - 1,
-            my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks);
+            my_ordering, share_to, share_from, share_bounds, share_limit, threads, locks, dive);
         threads_remaining -= threads_to_use;
         share_to[pos] = old_share_to;
         share_bounds[pos] = old_share_bounds;

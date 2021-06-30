@@ -3,6 +3,12 @@
 
 #include "lockingvars.h"
 
+enum DiveStatus {
+    UNSURE,
+    DIVING,
+    NODIVE
+};
+
 class Thread {
   private:
     int nObj_;
@@ -15,6 +21,7 @@ class Thread {
     int ** share_bounds;
     int ** share_limit;
     Locking_Vars ** locks;
+    DiveStatus * diveStatus;
 
     bool partnered;
 
@@ -25,8 +32,9 @@ class Thread {
 
     Thread(int id_, int nObj, const int * perm_, int ** share_to_,
         int ** share_from_, int ** share_bounds_, int ** share_limit_, 
-        Locking_Vars ** locks_, bool partnered);
-    Thread(int id_, int nObj, int totalObjCount, double split_start_, double split_stop_);
+        Locking_Vars ** locks_, bool partnered, bool dive);
+    Thread(int id_, int nObj, int totalObjCount, double split_start_, double
+        split_stop_, bool dive);
 
   private:
     int * perm_;

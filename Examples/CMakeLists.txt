@@ -5,7 +5,11 @@ FOREACH(TESTFILE ${TESTS})
     "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
     $<TARGET_FILE:aira>
     "${TESTFILE}")
-  GET_FILENAME_COMPONENT(TESTNAME ${TESTFILE} NAME_WE)
+  ADD_TEST(NAME "${TESTNAME}-dive" COMMAND
+    "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
+    $<TARGET_FILE:aira>
+    "${TESTFILE}"
+    "--dive")
   ADD_TEST(NAME "${TESTNAME}-group2" COMMAND
     "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
     $<TARGET_FILE:aira>
@@ -16,6 +20,11 @@ FOREACH(TESTFILE ${TESTS})
     $<TARGET_FILE:aira>
     "${TESTFILE}"
     "-t 2 -s")
+  ADD_TEST(NAME "${TESTNAME}-spread2-dive" COMMAND
+    "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
+    $<TARGET_FILE:aira>
+    "${TESTFILE}"
+    "-t 2 -s --dive")
   ADD_TEST(NAME "${TESTNAME}-flat2" COMMAND
     "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
     $<TARGET_FILE:aira>
@@ -26,4 +35,9 @@ FOREACH(TESTFILE ${TESTS})
     $<TARGET_FILE:aira>
     "${TESTFILE}"
     "-t 2 --split --split-normal")
+  ADD_TEST(NAME "${TESTNAME}-normal2-dive" COMMAND
+    "${PROJECT_SOURCE_DIR}/scripts/checkResults.sh"
+    $<TARGET_FILE:aira>
+    "${TESTFILE}"
+    "-t 2 --split --split-normal --dive")
 ENDFOREACH(TESTFILE)

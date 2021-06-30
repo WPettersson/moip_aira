@@ -7,7 +7,8 @@
 #endif
 
 Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** share_from_,
-    int ** share_bounds_, int ** share_limit_, Locking_Vars ** locks_, bool partnered_) :
+    int ** share_bounds_, int ** share_limit_, Locking_Vars ** locks_, bool partnered_,
+    bool dive) :
   nObj_(nObj), id(id_), partnered(partnered_), split_start(0)//, split_stop(0)
 {
   split_stop = 0;
@@ -52,6 +53,17 @@ Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** s
   perm_ = new int[nObj];
   for(int i = 0; i < nObj; ++i) {
     perm_[i] = perm__[i];
+  }
+  diveStatus = new DiveStatus[nObj];
+  if (dive) {
+    for(int i = 0; i < nObj-1; ++i) {
+      diveStatus[i] = UNSURE;
+    }
+    diveStatus[nObj-1] = NODIVE;
+  } else {
+    for(int i = 0; i < nObj; ++i) {
+      diveStatus[i] = NODIVE;
+    }
   }
 }
 
@@ -121,7 +133,8 @@ void Thread::setNumObjectives(int newObj) {
 
 
 
-Thread::Thread(int id_, int nObj, int totalObjCount, double split_start_, double split_stop_) :
+Thread::Thread(int id_, int nObj, int totalObjCount, double split_start_,
+    double split_stop_, bool dive) :
   nObj_(nObj),
   id(id_), share_to(nullptr), share_from(nullptr), locks(nullptr), split_start(split_start_),
   split_stop(split_stop_)
@@ -129,5 +142,16 @@ Thread::Thread(int id_, int nObj, int totalObjCount, double split_start_, double
   perm_ = new int[totalObjCount];
   for(int i = 0; i < totalObjCount; ++i) {
     perm_[i] = i; // If splitting, all threads use a common permutation
+  }
+  diveStatus = new DiveStatus[nObj];
+  if (dive) {
+    for(int i = 0; i < nObj-1; ++i) {
+      diveStatus[i] = UNSURE;
+    }
+    diveStatus[nObj-1] = NODIVE;
+  } else {
+    for(int i = 0; i < nObj; ++i) {
+      diveStatus[i] = NODIVE;
+    }
   }
 }

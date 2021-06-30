@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <ctime>
 #include <iostream>
@@ -21,6 +22,9 @@
 #include "solutions.h"
 #include "errors.h"
 #include "thread.h"
+
+
+enum Status {INFEASIBLE, OPTIMAL};
 
 #ifdef DEBUG
 std::mutex debug_mutex;
@@ -105,7 +109,7 @@ std::atomic<int> ipcount;
  * Note that objectives that are not optimised will still be calculated, they
  * just won't be optimised in any way.
  */
-int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
+Status solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
 
 /**
  * Sets up the optimisation based on splitting the value of the final
@@ -114,8 +118,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t);
  * \param p The relevant Problem object
  * \param s A list in which to store solutions.
  * \param obj The objective to be optimised
+ * \param dive Are we going to try to dive.
  */
-void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj);
+void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj, bool dive);
 
 /**
  * Finds out the limit (either maximum or minimum) of one objective in the
@@ -160,6 +165,7 @@ int main (int argc, char *argv[])
   int solcount;
 
   bool spread = false;
+  bool dive = false;
   split = false;
 
   po::variables_map v;
@@ -184,6 +190,10 @@ int main (int argc, char *argv[])
      po::bool_switch(&spread)->default_value(true),
      "Spread threads out over various subgroups of the symmetries (as opposed to clustering inside subgroups).\n"
      "Optional, defaults to True")
+    ("dive,",
+     po::bool_switch(&dive),
+     "Attempt to dive via linear relaxations\n"
+     "Optional, defaults to False.")
     ("threads,t",
       po::value<int>(&num_threads)->default_value(1),
      "Number of threads to use internally. Optional, default to 1.")
@@ -279,7 +289,7 @@ int main (int argc, char *argv[])
   if (split) {
     std::list<int *> sols;
     // Note that split_setup will farm out jobs to threads and everything.
-    split_setup(e, p, sols, p.objcnt);
+    split_setup(e, p, sols, p.objcnt, dive);
     double * lp = new double[p.objcnt];
     for(auto s : sols) {
       all.insert(lp, s, false /* infeasible */);
@@ -296,7 +306,7 @@ int main (int argc, char *argv[])
     int ** share_limit = new int*[p.objcnt] {nullptr};
     Locking_Vars ** lvs = new Locking_Vars*[p.objcnt] {nullptr};
     Cluster c(num_threads, p.objcnt, p.objsen, spread, p.objcnt, ordering,
-        share_from, share_to, share_bounds, share_limit, threads, lvs);
+        share_from, share_to, share_bounds, share_limit, threads, lvs, dive);
     delete[] ordering;
     delete[] share_to;
     delete[] share_from;
@@ -471,21 +481,16 @@ void get_limit(Env & e, Problem & p, int obj, double * rhs, int * result, const 
   return;
 }
 
-int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
+Status solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 
   int cur_numcols, status, solnstat;
   double objval;
   double * srhs;
   srhs = new double[p.objcnt];
 
-  //for(int i = 0; i < p.objcnt; ++i)
-  //  srhs[i] = rhs[perm[i]];
-
   memcpy(srhs, rhs, p.objcnt * sizeof(double));
 
   cur_numcols = CPXgetnumcols(e.env, e.lp);
-
-  // TODO Permutation applies here.
   for (int j_preimage = 0; j_preimage < t->nObj(); j_preimage++) {
     int j = t->perm(j_preimage);
     status = CPXchgobj(e.env, e.lp, cur_numcols, p.objind[j], p.objcoef[j]);
@@ -497,41 +502,150 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
     if (status) {
       std::cerr << "Failed to change constraint srhs" << std::endl;
     }
-
-    /* solve for current objective*/
-    status = CPXmipopt (e.env, e.lp);
-    if (status) {
-      std::cerr << "Failed to optimize LP." << std::endl;
-    }
-
-    // This is shared across threads, but it's an atomic integer (so read/writes
-    // are atomic) and thus we don't need a lock/mutex
-    ipcount++;
-
-    solnstat = CPXgetstat (e.env, e.lp);
-    if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-       break;
-    }
-    status = CPXgetobjval (e.env, e.lp, &objval);
-    if ( status ) {
-      std::cerr << "Failed to obtain objective value." << std::endl;
-      exit(0);
-    }
-    if ( abs(objval) > 1/p.mip_tolerance ) {
-      while (abs(objval) > 1/p.mip_tolerance) {
-        p.mip_tolerance /= 10;
+    if (t->diveStatus[j_preimage] == DIVING) {
+      CPXLPptr relaxClone = CPXcloneprob(e.env, e.lp, &status);
+      if (status) {
+        std::cerr << status << std::endl;
+        std::cerr << "Failed to clone relaxed LP." << std::endl;
       }
-      CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+      status = CPXchgprobtype(e.env, relaxClone, CPXPROB_LP);
+      if (status) {
+        std::cerr << status << std::endl;
+        std::cerr << "Failed to relax LP." << std::endl;
+      }
+      status = CPXlpopt(e.env, relaxClone);
+      if (status) {
+        std::cerr << status << std::endl;
+        std::cerr << "Failed to optimize relaxed LP." << std::endl;
+      }
+      solnstat = CPXgetstat (e.env, relaxClone);
+      if ((solnstat == CPX_STAT_INFEASIBLE) || (solnstat == CPX_STAT_INForUNBD)) {
+        break;
+      }
+      status = CPXgetobjval (e.env, relaxClone, &objval);
+      if ( status ) {
+        std::cerr << "Failed to obtain objective value." << std::endl;
+        exit(0);
+      }
+      double fractpart, intpart;
+      fractpart = modf(objval, &intpart);
+      if (p.objsen == MIN) {
+        if (fractpart < 1e-6) { // CPLEX SIMPLEX TOLERANCE FEASIBILITY
+          objval = intpart;
+        } else {
+          objval = intpart + 1;
+        }
+      } else {
+        if (fractpart > (1 - 1e-6)) { // CPLEX SIMPLEX TOLERANCE FEASIBILITY
+          objval = intpart + 1;
+        } else {
+          objval = intpart;
+        }
+      }
+    } else {
+      double relaxedObj;
+      if (t->diveStatus[j_preimage] == UNSURE) {
+        CPXLPptr relaxClone = CPXcloneprob(e.env, e.lp, &status);
+        if (status) {
+          std::cerr << status << std::endl;
+          std::cerr << "Failed to clone relaxed LP." << std::endl;
+        }
+        status = CPXchgprobtype(e.env, relaxClone, CPXPROB_LP);
+        if (status) {
+          std::cerr << status << std::endl;
+          std::cerr << "Failed to relax LP." << std::endl;
+        }
+        status = CPXlpopt(e.env, relaxClone);
+        if (status) {
+          std::cerr << status << std::endl;
+          std::cerr << "Failed to optimize relaxed LP." << std::endl;
+        }
+        solnstat = CPXgetstat (e.env, relaxClone);
+        if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+          break;
+        }
+        status = CPXgetobjval (e.env, relaxClone, &relaxedObj);
+        if ( status ) {
+          std::cerr << "Failed to obtain objective value." << std::endl;
+          exit(0);
+        }
+      }
+      /* solve for current objective*/
       status = CPXmipopt (e.env, e.lp);
+      if (status) {
+        std::cerr << "Failed to optimize LP." << std::endl;
+      }
+
+      // This is shared across threads, but it's an atomic integer (so read/writes
+      // are atomic) and thus we don't need a lock/mutex
       ipcount++;
+
       solnstat = CPXgetstat (e.env, e.lp);
       if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
-        break;
+        if ((j_preimage >= 1) && (t->diveStatus[j_preimage-1] == DIVING)) {
+          t->diveStatus[j_preimage-1] = NODIVE;
+          int lastj = t->perm(j_preimage-1);
+          srhs[lastj] = rhs[lastj];
+          // Subtracting two from j_preimage and hitting continue skips back
+          // one step (as the default is to add one)
+          j_preimage -= 2;
+          continue;
+        } else {
+          break;
+        }
       }
       status = CPXgetobjval (e.env, e.lp, &objval);
       if ( status ) {
         std::cerr << "Failed to obtain objective value." << std::endl;
         exit(0);
+      }
+      if ( abs(objval) > 1/p.mip_tolerance ) {
+        while (abs(objval) > 1/p.mip_tolerance) {
+          p.mip_tolerance /= 10;
+        }
+        CPXsetdblparam(e.env, CPXPARAM_MIP_Tolerances_MIPGap, p.mip_tolerance);
+        status = CPXmipopt (e.env, e.lp);
+        ipcount++;
+        solnstat = CPXgetstat (e.env, e.lp);
+        if ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD)) {
+          if ((j_preimage >= 1) && (t->diveStatus[j_preimage-1] == DIVING)) {
+            t->diveStatus[j_preimage-1] = NODIVE;
+            int lastj = t->perm(j_preimage-1);
+            srhs[lastj] = rhs[lastj];
+            // Subtracting two from j_preimage and hitting continue skips back
+            // one step (as the default is to add one)
+            j_preimage -= 2;
+            continue;
+          } else {
+            break;
+          }
+        }
+        status = CPXgetobjval (e.env, e.lp, &objval);
+        if ( status ) {
+          std::cerr << "Failed to obtain objective value." << std::endl;
+          exit(0);
+        }
+      }
+      if (t->diveStatus[j_preimage] == UNSURE) {
+        int relaxed;
+        double fractpart, intpart;
+        fractpart = modf(relaxedObj, &intpart);
+        if (p.objsen == MIN) {
+          if (fractpart < 1e-6) { // CPLEX SIMPLEX TOLERANCE FEASIBILITY
+            relaxed = intpart;
+          } else {
+            relaxed = intpart + 1;
+          }
+        } else {
+          if (fractpart > (1 - 1e-6)) { // CPLEX SIMPLEX TOLERANCE FEASIBILITY
+            relaxed = intpart + 1;
+          } else {
+            relaxed = intpart;
+          }
+        }
+        if (relaxed == objval) {
+          t->diveStatus[j_preimage] = DIVING;
+        }
       }
     }
 
@@ -554,7 +668,9 @@ int solve(Env & e, Problem & p, int * result, double * rhs, Thread * t) {
 
   delete[] srhs;
 
-  return solnstat;
+  if ((solnstat == CPX_STAT_OPTIMAL) || (solnstat == CPXMIP_OPTIMAL))
+    return OPTIMAL;
+  return INFEASIBLE;
 }
 
 template<Sense sense>
@@ -633,7 +749,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   clock_gettime(CLOCK_MONOTONIC, &start);
   double starttime = (start.tv_sec + start.tv_nsec/1e9);
 #endif
-  int solnstat = solve(e, p, result, rhs, t);
+  Status solnstat = solve(e, p, result, rhs, t);
 #ifdef FINETIMING
   clock_gettime(CLOCK_MONOTONIC, &start);
   cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
@@ -651,7 +767,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     std::cout << ",";
   }
   std::cout << " found ";
-  if (solnstat == CPXMIP_INFEASIBLE) {
+  if (solnstat == INFEASIBLE) {
     std::cout << "infeasible";
   } else {
     for(int i = 0; i < p.objcnt; ++i) {
@@ -663,13 +779,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
 
   /* Need to add a result to the list here*/
-  if (solnstat == CPXMIP_INFEASIBLE) {
+  if (solnstat == INFEASIBLE) {
     infeasibles.insert(rhs, result, true);
   } else {
     if (split)
-      all.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+      all.insert(rhs, result, solnstat == INFEASIBLE);
     else
-      s.insert(rhs, result, solnstat == CPXMIP_INFEASIBLE);
+      s.insert(rhs, result, solnstat == INFEASIBLE);
   }
   // Note that if we are splitting, we aren't sharing.
   if (split) {
@@ -678,7 +794,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     else
       t->split_stop++;
   } else {
-    if (sharing && (solnstat != CPXMIP_INFEASIBLE)) {
+    if (sharing && (solnstat != INFEASIBLE)) {
       int *objectives = new int[p.objcnt];
       for (int i = 0; i < p.objcnt; ++i) {
         objectives[i] = result[i];
@@ -698,7 +814,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   debug_mutex.unlock();
 #endif
 
-  if (sharing && (solnstat != CPXMIP_INFEASIBLE) && (p.objcnt > 1)) {
+  if (sharing && (solnstat != INFEASIBLE) && (p.objcnt > 1)) {
     int i = t->perm(1);
     if (t->share_to[i] != nullptr) {
       if (sense == MIN) {
@@ -712,7 +828,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       }
     }
   }
-  if (solnstat != CPXMIP_INFEASIBLE) {
+  if (solnstat != INFEASIBLE) {
     for (int j = 0; j < p.objcnt; j++) {
       min[j] = max[j] = result[j];
     }
@@ -825,7 +941,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     min[objective] = (int) CPX_INFBOUND;
     while (infcnt < objective_counter && !completed) {
       bool relaxed;
-      int solnstat;
+      Status solnstat;
       /* Look for possible relaxations to the current problem*/
       const Result *relaxation;
 
@@ -859,7 +975,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         clock_gettime(CLOCK_MONOTONIC, &start);
         cplex_time += (start.tv_sec + start.tv_nsec/1e9) - starttime;
 #endif
-        infeasible = ((solnstat == CPXMIP_INFEASIBLE) || (solnstat == CPXMIP_INForUNBD));
+        infeasible = (solnstat == INFEASIBLE) ;
         /* Store result */
         if (infeasible) {
           infeasibles.insert(rhs, result, true);
@@ -1838,7 +1954,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   delete[] max;
 }
 
-void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min) {
+void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min, bool dive) {
   double start_point, stop_point;
   if (p.objsen == MIN) {
     start_point = max;
@@ -1863,10 +1979,10 @@ void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min)
         start = normal_values[num_threads][t]*gap + start_point;
         stop = normal_values[num_threads][t+1]*gap + start_point;
       }
-      threads.push_back(new Thread(t, nObj, p.objcnt, start, stop));
+      threads.push_back(new Thread(t, nObj, p.objcnt, start, stop, dive));
     } else {
       split_stop = split_start + step_size;
-      threads.push_back(new Thread(t, nObj, p.objcnt, split_start, split_stop));
+      threads.push_back(new Thread(t, nObj, p.objcnt, split_start, split_stop, dive));
       split_start = split_stop;
     }
   }
@@ -1897,7 +2013,7 @@ void split_optimise(Problem &p, std::list<int *>& s, int nObj, int max, int min)
   }
 }
 
-void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
+void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj, bool dive) {
   if (nObj == 1) {
     int *min = new int[p.objcnt];
     get_limit(e, p, nObj - 1, p.rhs, min, p.objsen);
@@ -1907,7 +2023,7 @@ void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
     std::cout << "Splitting on " << nObj << " objectives ... ";
 #endif
     std::list<int *> sols;
-    split_setup(e, p, sols, nObj - 1);
+    split_setup(e, p, sols, nObj - 1, dive);
     int * res = new int[p.objcnt];
     int biggest, smallest;
     if (p.objsen == MIN) {
@@ -1940,6 +2056,6 @@ void split_setup(Env &e, Problem &p, std::list<int *> &s, int nObj) {
     std::cout << " found range [" << smallest << ", " << biggest << "]";
     std::cout << " for objective " << (nObj-1) << std::endl;
 #endif
-    split_optimise(p, s, nObj, biggest, smallest);
+    split_optimise(p, s, nObj, biggest, smallest, dive);
   }
 }
