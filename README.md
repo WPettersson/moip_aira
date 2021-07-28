@@ -1,8 +1,10 @@
 # README #
 
-This is a multi-objective integer programming (MOIP) algorithm, which is heavily based on the work discussed in the following paper.
+This is a multi-objective integer programming (MOIP) algorithm, which is heavily based on the work discussed in
+Ozlen, M., Burton, B. A., & MacRae, C. A. (2014). Multi-objective integer programming: An improved recursive algorithm. Journal of Optimization Theory and Applications. doi: 10.1007/s10957-013-0364-y
 
-Ozlen, M., Burton, B. A., & MacRae, C. A. (2014). Multi-objective integer programming: An improved recursive algorithm. Journal of Optimization Theory and Applications, 160(2), 470-482.
+The parallel elements are documented in
+W. Pettersson, M. Ozlen (2019). Multi-objective integer programming: Synergistic parallel approaches. INFORMS Journal on Computing 2019; doi: 10.1287/ijoc.2018.0875 
 
 The original algorithm implementation can be found at https://bitbucket.org/melihozlen/moip_aira/ but this version has significant changes, noticeably a switch to C++ and boost for various utility functions, as well as the use of parallel processing.
 
