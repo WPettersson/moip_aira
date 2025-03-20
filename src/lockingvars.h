@@ -4,6 +4,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <iostream>
+#include <ostream>
+#include <vector>
+
+#include "threadstate.h"
+
 
 /**
  * Any pair of threads that are sharing solutions need to synchronise limits on
@@ -17,15 +23,16 @@ class Locking_Vars {
      */
     std::mutex status_mutex;
     /**
-     * How many threads that share this Locking_Vars are currently running.
-     * The last thread running is often used as a pseudo-master when
-     * synchronising.
-     */
-    std::atomic<int> num_running_threads;
-    /**
-     * Used for synchronising as well.
+     * Used for synchronising the sharing of bounds.
      */
     std::condition_variable cv;
+    /**
+     * Used for synchronising when subproblems are complete.
+     */
+    std::condition_variable cv_subproblem_complete;
+
+
+    void add_state(std::atomic<ThreadState> const *state);
     /**
      * Allows propogation of limits introduced from outside this cluster.
      *
@@ -44,42 +51,50 @@ class Locking_Vars {
     /**
      * Basic constructor
      */
-    Locking_Vars(int num_running_threads_);
+    Locking_Vars();
     /**
-     * Reset the number of running threads
+     * Check if all threads are done. That is, have they all either finished
+     * this subproblem or reached a point where they can share bounds.
      */
-    void reset_num_running_threads();
+    bool any_complete() const;
     /**
-     * The number of threads in this cluster.
+     * Check if all threads are complete. That is, have they found their solutions and exited.
      */
-    int max_threads() const;
-  private:
+    bool all_done() const;
     /**
-     * The number of threads in this cluster.
+     * A list of thread statuses, so we can check the status of each thread that shares this lock.
      */
-    int max_running_threads;
+    std::vector<std::atomic<ThreadState> const *> states;
 };
 
-/**
-  * Reset the number of running threads
-  */
-inline void Locking_Vars::reset_num_running_threads() {
-  num_running_threads = max_running_threads;
+inline bool Locking_Vars::all_done() const {
+  for(auto s: states) {
+    if (*s == ThreadState::Running) {
+      return false;
+    }
+  }
+  return true;
 }
 
-/**
-  * The number of threads in this cluster.
-  */
-inline int Locking_Vars::max_threads() const {
-  return max_running_threads;
+inline bool Locking_Vars::any_complete() const {
+  for(auto s: states) {
+    if (*s == ThreadState::Complete) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
+inline void Locking_Vars::add_state(std::atomic<ThreadState> const *state) {
+  states.push_back(state);
 }
 
 /**
   * Basic constructor
   */
-inline Locking_Vars::Locking_Vars(int num_running_threads_) :
-    num_running_threads(num_running_threads_), changed(false),
-    found_any(false), max_running_threads(num_running_threads_) {
+inline Locking_Vars::Locking_Vars() :
+    changed(false), found_any(false) {
 }
 
 

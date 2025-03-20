@@ -8,7 +8,7 @@
 
 Thread::Thread(int id_, int nObj, const int * perm__, int ** share_to_, int ** share_from_,
     int ** share_bounds_, int ** share_limit_, Locking_Vars ** locks_, bool partnered_) :
-  nObj_(nObj), id(id_), partnered(partnered_), split_start(0)//, split_stop(0)
+  nObj_(nObj), id(id_), state(ThreadState::Running), partnered(partnered_), split_start(0)//, split_stop(0)
 {
   split_stop = 0;
   share_to = new int*[nObj];

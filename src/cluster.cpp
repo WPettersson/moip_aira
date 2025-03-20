@@ -102,7 +102,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
       int i;
       for(i = 0; i < withExtra ; ++i) {
         int pos = my_ordering[nObjLeft-1];
-        locks[pos] = new Locking_Vars(perCluster + 1);
+        locks[pos] = new Locking_Vars();
         int * old_share_to = share_to[pos];
         int * old_share_bounds = share_bounds[pos];
         int * old_share_limit = share_limit[pos];
@@ -144,7 +144,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
           int * old_share_to = share_to[pos];
           int * old_share_bounds = share_bounds[pos];
           int * old_share_limit = share_limit[pos];
-          locks[pos] = new Locking_Vars(perCluster);
+          locks[pos] = new Locking_Vars();
           int ** old_from = new int*[nObj];
           for(int j = 0; j < nObjLeft; ++j) {
             int obj = my_ordering[j];
@@ -183,7 +183,7 @@ Cluster::Cluster(int nThreads, int nObj, Sense sense, bool spread_threads,
       while (threads_remaining > 0) {
         int threads_to_use = (S[nObjLeft-1].size() > threads_remaining) ? threads_remaining : S[nObjLeft-1].size();
         int pos = my_ordering[nObjLeft-1];
-        locks[pos] = new Locking_Vars(threads_to_use);
+        locks[pos] = new Locking_Vars();
         int * old_share_to = share_to[pos];
         int * old_share_bounds = share_bounds[pos];
         int * old_share_limit = share_limit[pos];

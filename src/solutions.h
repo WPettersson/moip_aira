@@ -20,8 +20,10 @@ class Solutions {
     std::list<Result*>::const_iterator begin() const;
     std::list<Result*>::const_iterator end() const;
 
-    // Sorting
-    static void sort( bool (*cmp)(const Result * a, const Result * b) );
+    /*
+     * Sort the list of results, and remove any duplicates.
+     */
+    void sort_unique();
 
   private:
     int objective_count;
@@ -38,13 +40,7 @@ inline Solutions::Solutions(int numObjectives) : objective_count(numObjectives)
 
 inline void Solutions::merge(Solutions& other) {
   std::unique_lock<std::mutex> lk(mutex);
-  // Note that only one list is allowed to own a pointer at any one time.
-  // We aren't used unique_ptr to avoid overheads, we are trusting that our
-  // coding is correct.
-  while (other.store_.size() > 0) {
-    store_.push_back(other.store_.front());
-    other.store_.pop_front();
-  }
+  store_.splice(store_.begin(), other.store_);
 }
 
 inline std::list<Result *>::const_iterator Solutions::begin() const {
@@ -55,8 +51,9 @@ inline std::list<Result *>::const_iterator Solutions::end() const {
   return store_.end();
 }
 
-inline void Solutions::sort() {
+inline void Solutions::sort_unique() {
   store_.sort( [](const Result *a, const Result *b) {return (*a) < (*b);} );
+  store_.unique( [](const Result *a, const Result *b) {return (*a) ==( *b);} );
 }
 
 #endif /* SOLUTIONS_H */

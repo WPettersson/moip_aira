@@ -22,7 +22,7 @@
 #include "errors.h"
 #include "thread.h"
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(DEBUG_SYNC) || defined(DEBUG_SHARES)
 std::mutex debug_mutex;
 #endif
 
@@ -73,14 +73,6 @@ double normal_values[13][13] {
  * threads.
  */
 const int MAX_THREADS_NORMAL_SPLIT = 12;
-
-/**
- * Has a thread completed its search. If one thread is finished, it will have
- * synchronised along the way, and therefore it (and possibly its
- * cluster-friends) will have the complete list of solutions. That is, if
- * completed is true, then the search may exit.
- */
-bool completed;
 
 /**
  * Track how many individual IPs we solve.
@@ -271,8 +263,6 @@ int main (int argc, char *argv[])
 
   Solutions all(p.objcnt);
 
-  completed = false;
-
   std::list<Locking_Vars*> locking_var_list;
 
   std::list<Thread*> threads;
@@ -342,29 +332,17 @@ int main (int argc, char *argv[])
   clock_gettime(CLOCK_MONOTONIC, &start);
   elapsedtime = (start.tv_sec + start.tv_nsec/1e9 - startelapsed);
 
-  all.sort();
   solcount = 0;
+  all.sort_unique();
 
-  /* List of things we've printed */
-  std::list<const Result *> printed;
   for (const Result* soln: all) {
     if (soln->infeasible)
       continue;
-    bool printMe = true;
-    for (auto& done: printed) {
-      if (*done == *soln) {
-        printMe = false;
-        break;
-      }
+    for (int i = 0; i < p.objcnt; i++) {
+      outFile << soln->result[i] << "\t";
     }
-    if (printMe) {
-      for (int i = 0; i < p.objcnt; i++) {
-        outFile << soln->result[i] << "\t";
-      }
-      outFile << std::endl;
-      printed.push_back(soln);
-      solcount++;
-    }
+    outFile << std::endl;
+    solcount++;
   }
 
   constexpr int width = 8;
@@ -760,14 +738,14 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         } else {
           rhs[j] = -CPX_INFBOUND;
         }
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << j << "] to ±inf" << std::endl;
           debug_mutex.unlock();
 #endif
       } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << j << "] to " << *t->share_from[j] << std::endl;
@@ -782,7 +760,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     /* Set rhs of current depth */
     if (sense == MIN) {
       rhs[objective] = max[objective]-1;
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << objective << "] to " << (max[objective]-1) << std::endl;
@@ -790,7 +768,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
     } else {
       rhs[objective] = min[objective]+1;
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << objective << "] to " << (min[objective]+1) << std::endl;
@@ -823,7 +801,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
     }
     max[objective] = (int) -CPX_INFBOUND;
     min[objective] = (int) CPX_INFBOUND;
-    while (infcnt < objective_counter && !completed) {
+    while (infcnt < objective_counter) {
       bool relaxed;
       int solnstat;
       /* Look for possible relaxations to the current problem*/
@@ -887,13 +865,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       if (relaxed)
         std::cout << "relaxation ";
       if (infeasible) {
-        std::cout << "infeasible." << std::endl;
+        std::cout << "infeasible ";
       } else {
         for(int i = 0; i < p.objcnt; ++i) {
           std::cout << result[i] << ",";
         }
-        std::cout << std::endl;
       }
+      std::cout << " on line " << __LINE__ << std::endl;
       debug_mutex.unlock();
 #endif
       if (split) {
@@ -945,9 +923,10 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       } else if (sharing && t->locks && t->locks[t->perm(infcnt+1)]) {
         std::unique_lock<std::mutex> lk(t->locks[t->perm(infcnt+1)]->status_mutex);
 #ifdef DEBUG
+          auto lock_num = t->perm(infcnt+1);
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
-          std::cout << " got lock on " << t->perm(infcnt+1) << std::endl;
+          std::cout << " got lock on " << lock_num << std::endl;
           debug_mutex.unlock();
 #endif
         // Note that perm[1] is only shared with one other thread, that only
@@ -975,9 +954,9 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           if (sense == MIN) {
             if (result[t->perm(0)] >= *t->share_from[t->perm(0)]) {
 #ifdef DEBUG
-          debug_mutex.lock();
-          std::cout << "Thread " << t->id << " smaller result found by partner, bailing." << std::endl;
-          debug_mutex.unlock();
+              debug_mutex.lock();
+              std::cout << "Thread " << t->id << " smaller result found by partner, bailing." << std::endl;
+              debug_mutex.unlock();
 #endif
               // Check if our partner found something.
               if (t->locks) {
@@ -986,10 +965,10 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                 if (lv != nullptr) {
                   if (lv->found_any) {
 #ifdef DEBUG
-            debug_mutex.lock();
-            std::cout << "Thread " << t->id << " ";
-            std::cout << "partner found something." << std::endl;
-            debug_mutex.unlock();
+                    debug_mutex.lock();
+                    std::cout << "Thread " << t->id << " ";
+                    std::cout << "partner found something." << std::endl;
+                    debug_mutex.unlock();
 #endif
                     // Partner found something
                     infcnt = 0;
@@ -1099,6 +1078,12 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           infcnt = 0;
           inflast = false;
         }
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << " should drop lock on " << lock_num << std::endl;
+          debug_mutex.unlock();
+#endif
       } else {
         if (infeasible) {
           infcnt++;
@@ -1141,16 +1126,15 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
         bool wait = false;
         Locking_Vars *lv = nullptr;
-        if (t->locks && !completed)
+        if (t->locks)
           lv = t->locks[updated_objective];
-        if ( lv != nullptr) {
+        if ( lv != nullptr && !lv->any_complete()) {
           std::unique_lock<std::mutex> lk(lv->status_mutex);
-          if ( lv->num_running_threads > 1) {
-            lv->num_running_threads--; // This thread is no longer running.
+          t->state = ThreadState::Waiting;
+          if ( ! lv->all_done()) {
 #ifdef DEBUG_SYNC
             debug_mutex.lock();
-            std::cout << "Thread " << t->id <<  " done, at " << __LINE__ << " w/ ";
-            std::cout << lv->num_running_threads << " threads still going." << std::endl;
+            std::cout << "Thread " << t->id <<  " done, at " << __LINE__ << std::endl;
             debug_mutex.unlock();
 #endif
             // Share all bounds!
@@ -1173,14 +1157,21 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             clock_gettime(CLOCK_MONOTONIC, &start);
             double start_wait = start.tv_sec + start.tv_nsec/1e9;
 #endif
-            if (!completed) {
+            if (!lv->any_complete()) {
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "waiting on lock " << lv << " at " << __LINE__ << std::endl;
           debug_mutex.unlock();
 #endif
-              lv->cv.wait(lk); // Wait for all other threads to update limits.
+              lv->cv_subproblem_complete.wait(lk); // Wait for all other threads to update limits.
+              t->state = ThreadState::Running;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "released on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
             }
 #ifdef FINETIMING
             clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1214,7 +1205,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
               }
             }
           } else {
-            // This thread is last.
+            // This thread is last to finish this subproblem.
 #ifdef DEBUG_SYNC
             debug_mutex.lock();
             std::cout << "Thread " << t->id <<  " done at " << __LINE__ << ", ";
@@ -1229,12 +1220,24 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                   if (*t->share_bounds[i] < max[i]) {
                     *t->share_bounds[i] = max[i];
                   } else {
+#ifdef DEBUG_SHARES
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << "setting max[" << i << "] to " << *t->share_bounds[i] << " from " << max[i] << std::endl;
+          debug_mutex.unlock();
+#endif
                     max[i] = *t->share_bounds[i];
                   }
                 } else {
                   if (*t->share_bounds[i] > min[i]) {
                     *t->share_bounds[i] = min[i];
                   } else {
+#ifdef DEBUG_SHARES
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << "setting min[" << i << "] to " << min[i] << std::endl;
+          debug_mutex.unlock();
+#endif
                     min[i] = *t->share_bounds[i];
                   }
                 }
@@ -1258,7 +1261,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             int * limit = t->share_limit[updated_objective];
             if ((limit != nullptr) && (t->share_from[updated_objective] != nullptr)) {
               *limit = *t->share_from[updated_objective];
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
               debug_mutex.lock();
               std::cout << "Thread " << t->id << " ";
               std::cout << "set limit[" << updated_objective << "] to ";
@@ -1266,14 +1269,12 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
               debug_mutex.unlock();
 #endif
             }
-            lv->reset_num_running_threads(); // These threads are starting up again.
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << ", ";
             std::cout << "max is " << max[updated_objective] << ", ";
             if (t->share_bounds[updated_objective] != nullptr)
-              std::cout << "share_to is " << *t->share_to[updated_objective] << ", ";
-            std::cout << lv->num_running_threads << " threads going." << std::endl;
+              std::cout << "share_to is " << *t->share_to[updated_objective] << std::endl;
             debug_mutex.unlock();
 #endif
 #ifdef DEBUG_SYNC
@@ -1283,13 +1284,14 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
             lk.unlock();
-            lv->cv.notify_all();
+            t->state = ThreadState::Running;
+            lv->cv_subproblem_complete.notify_all();
           }
         }
-        if (!completed && lv != nullptr) {
+        if (lv != nullptr && !lv->any_complete()) {
           for(int i = 0; i <= infcnt; ++i) {
             if (sense == MIN) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting max[" << t->perm(i) << "] to -inf" << std::endl;
@@ -1297,7 +1299,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
               max[t->perm(i)] = (int)-CPX_INFBOUND;
               if (t->share_to[t->perm(i)] != nullptr) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting share_to[" << t->perm(i) << "] to inf" << std::endl;
@@ -1306,7 +1308,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                 *t->share_to[t->perm(i)] = (int)CPX_INFBOUND;
               }
               if (t->share_limit[t->perm(i)] != nullptr) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting limit_to[" << t->perm(i) << "] to inf" << std::endl;
@@ -1328,9 +1330,9 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           // Reset share_bounds to their limit. First, reset to ±infinity.
             {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
-              lv->num_running_threads--;
-              if (lv->num_running_threads > 0) {
-                if (completed)
+              t->state = ThreadState::Waiting;
+              if (! lv->all_done()) {
+                if (lv->any_complete())
                   break;
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
@@ -1339,6 +1341,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
                 lv->cv.wait(lk);
+                t->state = ThreadState::Running;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "released on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
               } else {
                 // Last in. Reset the shared_bounds here.
                 for(int pre_i = 0; pre_i <= infcnt+1; ++pre_i) {
@@ -1351,13 +1360,13 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     }
                   }
                 }
-                lv->reset_num_running_threads();
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "releasing on lock " << lv << " at " << __LINE__ << std::endl;
           debug_mutex.unlock();
 #endif
+                t->state = ThreadState::Running;
                 lk.unlock();
                 lv->cv.notify_all();
               }
@@ -1365,9 +1374,9 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           do {
             {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
-              lv->num_running_threads--;
-              if (lv->num_running_threads > 0) {
-                if (completed)
+              t->state = ThreadState::Waiting;
+              if (! lv->all_done()) {
+                if (lv->any_complete())
                   break;
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
@@ -1376,10 +1385,16 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
                 lv->cv.wait(lk);
+                t->state = ThreadState::Running;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "released on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
               } else {
                 // Last in
                 lv->changed = false;
-                lv->reset_num_running_threads();
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
@@ -1387,6 +1402,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
                 lk.unlock();
+                t->state = ThreadState::Running;
                 lv->cv.notify_all();
               }
             }
@@ -1394,7 +1410,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
               int obj = t->perm(i);
               if (sense == MIN) {
                 if (t->share_from[obj] != nullptr) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << " share_from[" << obj << "] is " << *t->share_from[obj] << std::endl;
@@ -1404,7 +1420,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     if (*t->share_limit[obj] > *t->share_from[obj]) {
                       lv->changed = true;
                       *t->share_limit[obj] = *t->share_from[obj];
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting share_limit[" << obj << "] to " << max[obj] << std::endl;
@@ -1413,7 +1429,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     }
                   }
                   if (t->share_to[obj] != nullptr) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << " share_to[" << obj << "] is " << *t->share_to[obj] << std::endl;
@@ -1422,7 +1438,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     if (*t->share_to[obj] > *t->share_from[obj]) {
                       lv->changed = true;
                       *t->share_to[obj] = *t->share_from[obj];
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting share_to[" << obj << "] to " << max[obj] << std::endl;
@@ -1437,7 +1453,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     if (*t->share_limit[obj] < *t->share_from[obj]) {
                       lv->changed = true;
                       *t->share_limit[obj] = *t->share_from[obj];
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting share_limit[" << obj << "] to " << max[obj] << std::endl;
@@ -1449,7 +1465,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     if (*t->share_to[obj] < *t->share_from[obj]) {
                       lv->changed = true;
                       *t->share_to[obj] = *t->share_from[obj];
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " ";
           std::cout << "setting share_to[" << obj << "] to " << max[obj] << std::endl;
@@ -1462,9 +1478,9 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             }
             {
               std::unique_lock<std::mutex> lk(lv->status_mutex);
-              lv->num_running_threads--;
-              if (lv->num_running_threads > 0) {
-                if (completed)
+              t->state = ThreadState::Waiting;
+              if (! lv->all_done()) {
+                if (lv->any_complete())
                   break;
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
@@ -1473,9 +1489,16 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
                 lv->cv.wait(lk);
+                t->state = ThreadState::Running;
+#ifdef DEBUG_SYNC
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " ";
+          std::cout << "released on lock " << lv << " at " << __LINE__ << std::endl;
+          debug_mutex.unlock();
+#endif
               } else {
                 // Last in
-                lv->reset_num_running_threads();
+                t->state = ThreadState::Running;
                 lk.unlock();
 #ifdef DEBUG_SYNC
           debug_mutex.lock();
@@ -1487,7 +1510,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
               }
             }
           } while(lv->changed);
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           for (int i=0; i < p.objcnt; ++i) {
             std::cout << "Thread " << t->id << " ";
@@ -1531,7 +1554,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
       if (sharing && (p.objcnt > 2) && (infcnt == objective_counter) && (infcnt == p.objcnt - 2)) {
         if (t->share_to[t->perm(p.objcnt-1)] == nullptr)
           continue;
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
         debug_mutex.lock();
         std::cout << "Thread " << t->id << " updating bound on " << t->perm(p.objcnt-1);
         std::cout << " to ";
@@ -1566,7 +1589,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             if (sense == MIN) {
               rhs[j] = CPX_INFBOUND;
             } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << j << "] to " << "-inf" << std::endl;
@@ -1581,7 +1604,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             else
               share_from = t->share_limit[j];
             if (sense == MIN) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
               debug_mutex.lock();
               std::cout << "Thread " << t->id << " setting rhs[" << j;
               std::cout << "] to " << (*share_from - 1) << std::endl;
@@ -1589,7 +1612,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
               rhs[j] = *share_from - 1;
             } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
               debug_mutex.lock();
               std::cout << "Thread " << t->id << " setting rhs[" << j;
               std::cout << "] to " << (*share_from + 1) << std::endl;
@@ -1601,7 +1624,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
               if (sense == MIN) {
                 if (*t->share_to[j] > *share_from) {
                   *t->share_to[j] = *share_from;
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " setting share_to[" << j;
             std::cout << "] to " << *t->share_to[j] << std::endl;
@@ -1610,7 +1633,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                 }
               } else {
                 if (*t->share_to[j] < *share_from) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " changing share_to[" << j;
             std::cout << "] from " << *share_from << " to " << *t->share_to[j] << std::endl;
@@ -1630,7 +1653,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
          * set current level to max objective function value  -1 else set
          * current level to min objective function value  +1 */
         if (sense == MIN) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << objective << "] to " << max[objective]-1 <<std::endl;
@@ -1639,7 +1662,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           rhs[objective] = max[objective]-1;
           max[objective] = (int) -CPX_INFBOUND;
         } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << objective << "] to " << (min[objective]+1) << std::endl;
@@ -1657,7 +1680,8 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
-          std::cout << "increasing depth from " << depth_level << std::endl;
+          std::cout << "increasing depth from " << depth_level;
+          std::cout << " when infcnt is " << infcnt << " and objective_counter is " << objective_counter << std::endl;
           debug_mutex.unlock();
 #endif
         if (sharing) {
@@ -1678,7 +1702,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
             else if (t->share_from[depth] != nullptr)
               share_from = t->share_from[depth];
             if (share_from != nullptr) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << (*share_from + 1) << std::endl;
@@ -1686,7 +1710,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
               rhs[depth] = *share_from + 1;
             } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << -CPX_INFBOUND << std::endl;
@@ -1705,13 +1729,19 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 
         depth_level++;
         depth = t->perm(depth_level);
+#ifdef DEBUG_SHARES
+            debug_mutex.lock();
+            std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+            std::cout << "setting depth to " << depth << " and depth_level to " << depth_level << std::endl;
+            debug_mutex.unlock();
+#endif
         if (sense == MIN) {
           // Use the shared limit if the shared limit is smaller than max, or
           // if max is infinity, which happens if this thread found nothing
           // last round but another thread did find something.
           if (sharing && t->share_limit[depth] &&
               ((*t->share_limit[depth] < max[depth]) || (max[depth] == (int) -CPX_INFBOUND))) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << (*t->share_limit[depth]+1) << std::endl;
@@ -1719,7 +1749,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
             rhs[depth] = *t->share_limit[depth] - 1;
           } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << (max[depth]+1) << std::endl;
@@ -1731,7 +1761,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         } else {
           if (sharing && t->share_limit[depth] &&
               ((*t->share_limit[depth] > min[depth]) || (min[depth] == (int)CPX_INFBOUND))) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << (*t->share_limit[depth]+1) << std::endl;
@@ -1739,7 +1769,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
 #endif
             rhs[depth] = *t->share_limit[depth] + 1;
           } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
             debug_mutex.lock();
             std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
             std::cout << "setting rhs[" << depth << "] to " << (min[depth]+1) << std::endl;
@@ -1751,8 +1781,14 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         }
         onwalk = true;
       } else if (!onwalk && infcnt != 1) {
-        if (sense == MIN) {
 #ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << " when infcnt is " << infcnt << " and objective_counter is " << objective_counter << std::endl;
+          debug_mutex.unlock();
+#endif
+        if (sense == MIN) {
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << depth << "] to " << (max[depth]-1) << std::endl;
@@ -1761,7 +1797,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << depth << "] to " << (min[depth]+1) << std::endl;
@@ -1774,7 +1810,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         depth_level = 1;
         depth = t->perm(depth_level);
         if (sense == MIN) {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << depth << "] to " << -CPX_INFBOUND << std::endl;
@@ -1783,7 +1819,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           rhs[depth] = max[depth]-1;
           max[depth] = (int) -CPX_INFBOUND;
         } else {
-#ifdef DEBUG
+#ifdef DEBUG_SHARES
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << "setting rhs[" << depth << "] to " << -CPX_INFBOUND << std::endl;
@@ -1794,12 +1830,19 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
         }
         onwalk = false;
       }
+#ifdef DEBUG
+          debug_mutex.lock();
+          std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
+          std::cout << " just before end of loop with objective_counter = ";
+          std::cout << objective_counter << " and infcnt = " << infcnt << std::endl;
+          debug_mutex.unlock();
+#endif
     }
 #ifdef DEBUG
           debug_mutex.lock();
           std::cout << "Thread " << t->id << " at " << __LINE__ << " ";
           std::cout << " at end of loop with objective_counter = ";
-          std::cout << objective_counter << std::endl;
+          std::cout << objective_counter << " and infcnt = " << infcnt << std::endl;
           debug_mutex.unlock();
 #endif
 
@@ -1811,7 +1854,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
   if (sharing) {
-    completed = true;
+    t->state = ThreadState::Complete;
     for(int i = 0; i < p.objcnt; ++i) {
       Locking_Vars *lv = nullptr;
       if (t->locks)
@@ -1831,6 +1874,8 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
   std::cout << ", waited for " << wait_time << "s";
   std::cout << " and " << total_time << "s overall." << std::endl;
 #endif
+  s.sort_unique();
+
   all.merge(s);
   delete[] resultStore;
   delete[] rhs;

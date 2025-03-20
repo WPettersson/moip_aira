@@ -1,6 +1,7 @@
 #ifndef THREAD_H
 #define THREAD_H
 
+#include "threadstate.h"
 #include "lockingvars.h"
 
 class Thread {
@@ -15,6 +16,7 @@ class Thread {
     int ** share_bounds;
     int ** share_limit;
     Locking_Vars ** locks;
+    ThreadState state;
 
     bool partnered;
 
