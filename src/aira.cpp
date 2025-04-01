@@ -227,7 +227,7 @@ int main (int argc, char *argv[])
 
   Problem p(pFilename.c_str(), e);
 
-  if (p.objcnt >= maxObjCount) {
+  if (p.objcnt > maxObjCount) {
     std::cerr << "Error: This version of moip_aira has been compiled to support at most " << maxObjCount << " objectives." << std::endl;
     return -ERR_AIRA;
   }
