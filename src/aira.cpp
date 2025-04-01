@@ -975,11 +975,12 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     inflast = true;
                     depth_level = 1;
                     depth = t->perm(depth_level);
+                    onwalk = false;
+                    // Pretend infeasible to backtrack properly
+                    infeasible = true;
                   }
                 }
               }
-              // Pretend infeasible to backtrack properly
-              infeasible = true;
             }
           } else {
             if (result[t->perm(0)] <= *t->share_from[t->perm(0)]) {
@@ -1005,11 +1006,12 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                     inflast = true;
                     depth_level = 1;
                     depth = t->perm(depth_level);
+                    onwalk = false;
+                    // Pretend infeasible to backtrack properly
+                    infeasible = true;
                   }
                 }
               }
-              // Pretend infeasible to backtrack properly
-              infeasible = true;
             }
           }
           // Duplicate code as we are marking this result infeasible
@@ -1075,6 +1077,10 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
           debug_mutex.unlock();
 #endif
                 infcnt = 0;
+                // Need to reset depth_level to 1
+                depth_level = 1;
+                depth = t->perm(depth_level);
+                onwalk = false;
               }
             }
           }
