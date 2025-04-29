@@ -22,6 +22,9 @@
 #include "errors.h"
 #include "thread.h"
 
+
+int perm_start;
+
 #if defined(DEBUG) || defined(DEBUG_SYNC) || defined(DEBUG_SHARES)
 std::mutex debug_mutex;
 #endif
@@ -185,6 +188,9 @@ int main (int argc, char *argv[])
      "Note that each internal thread calls CPLEX, so the total number of "
      "threads used is threads*cplex_threads.\n"
      "Optional, defaults to 1.")
+    ("perm-start",
+        po::value<int>(&perm_start)->default_value(0),
+        "What permutation to use for the first thread, as an index into the symmetric group S_n.\n")
   ;
 
   po::store(po::parse_command_line(argc, argv, opt), v);
@@ -277,8 +283,9 @@ int main (int argc, char *argv[])
   } else {
     // Not splitting.
     int * ordering = new int[p.objcnt];
+    auto group = S[p.objcnt];
     for (int c = 0; c < p.objcnt; ++c) {
-      ordering[c] = c;
+      ordering[c] = group[perm_start][c];
     }
     int ** share_from = new int*[p.objcnt] {nullptr};
     int ** share_to = new int*[p.objcnt] {nullptr};
