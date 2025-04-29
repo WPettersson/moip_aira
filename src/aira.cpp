@@ -1455,7 +1455,7 @@ void optimise(const char * pFilename, Solutions & all, Solutions & infeasibles,
                 lv->cv.notify_all();
               }
             }
-            for (int i = 0; i <= infcnt; ++i) {
+            for (int i = 0; false && i <= infcnt; ++i) {
               int obj = t->perm(i);
               if (sense == MIN) {
                 if (t->share_from[obj] != nullptr) {
